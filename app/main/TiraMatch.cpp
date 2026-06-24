@@ -45,10 +45,13 @@ void TiraMatch::begin() {
   goSweepStep    = 0;
 
   unsigned long now = millis();
-  lastMove     = now;
-  lastSpawn    = now;
-  lastShift    = now;
-  lastColorAdd = now;
+  lastMove      = now;
+  lastSpawn     = now;
+  lastShift     = now;
+  lastColorAdd  = now;
+  introActive   = true;
+  introStart    = now;
+  lastIntroSound = now;
 
   clearLeds();
   updateDisplay();
@@ -56,7 +59,8 @@ void TiraMatch::begin() {
 }
 
 void TiraMatch::update() {
-  if (gameOver) { updateGameOver(); return; }
+  if (introActive) { updateIntro(); return; }
+  if (gameOver)   { updateGameOver(); return; }
 
   unsigned long now = millis();
 
@@ -102,7 +106,7 @@ void TiraMatch::update() {
 }
 
 void TiraMatch::onInput(int player, int button) {
-  if (gameOver) return;
+  if (introActive || gameOver) return;
   if (button == 0) {
     fire(player);
   } else {
@@ -425,6 +429,40 @@ void TiraMatch::renderSpawner() {
   leds[center - 1] = CRGB::White;
   leds[center]     = CRGB::Black;
   leds[center + 1] = CRGB::White;
+}
+
+void TiraMatch::updateIntro() {
+  unsigned long now     = millis();
+  unsigned long elapsed = now - introStart;
+
+  float progress = constrain((float)elapsed / 3000.0f, 0.0f, 1.0f);
+  int   half     = numLeds / 2;
+  int   pos      = (int)(progress * half);
+  int   leftPos  = pos;
+  int   rightPos = numLeds - 1 - pos;
+
+  // Actualizar tono cada 30ms (agudo → medio)
+  if (now - lastIntroSound >= 30) {
+    lastIntroSound = now;
+    int freq = (int)(4000.0f - progress * (4000.0f - 600.0f));
+    tone(BUZZER_PIN, freq);
+  }
+
+  // Render: solo los dos LEDs blancos
+  fill_solid(leds, numLeds, CRGB::Black);
+  leds[leftPos]  = CRGB::White;
+  leds[rightPos] = CRGB::White;
+  FastLED.show();
+
+  // Fin del intro: los LEDs se tocan
+  if (leftPos >= rightPos || elapsed >= 3000) {
+    noTone(BUZZER_PIN);
+    introActive = false;
+    unsigned long t = millis();
+    lastSpawn  = t;
+    lastMove   = t;
+    lastShift  = t;
+  }
 }
 
 void TiraMatch::updateGameOver() {

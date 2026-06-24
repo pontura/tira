@@ -4,7 +4,7 @@
 #define MAX_SHOTS        10   // disparos simultáneos en vuelo (ambos jugadores)
 #define SHOT_LEN         4    // largo del disparo en LEDs
 #define SHOT_SPEED       10   // ms por paso del disparo (menos = más rápido)
-#define SPAWN_INTERVAL     250  // ms inicial entre spawns (velocidad de arranque)
+#define SPAWN_INTERVAL     280  // ms inicial entre spawns (velocidad de arranque)
 #define SPAWN_INTERVAL_MIN  40  // ms mínimo entre spawns (velocidad máxima)
 #define SPAWN_ACCEL          0.5// ms que se reduce el intervalo por cada spawn
 #define SEGMENT_LEN      8    // LEDs por bloque de color antes de cambiar
@@ -76,6 +76,10 @@ private:
   int           shiftDir;
   unsigned long lastShift;
 
+  bool          introActive;
+  unsigned long introStart;
+  unsigned long lastIntroSound;
+
   bool          gameOver;
   int           loser;
   GoPhase       goPhase;
@@ -105,6 +109,7 @@ private:
   bool checkGameOver();
   void renderFrame();
   void renderSpawner();
+  void updateIntro();
   void updateGameOver();
   void renderBlinkFrame();
   void renderGameOver();
