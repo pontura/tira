@@ -23,6 +23,8 @@ protected:
   void displayClear();
   void displayText(int x, int y, const char* text, const uint8_t* font = u8g2_font_6x10_tr);
   void displaySend();
-  void playSound(const char* rtttl) { SoundManager::play(rtttl); }
-  void stopSound()                  { SoundManager::stop(); }
+  void playSound(const char* rtttl)        { SoundManager::play(rtttl); }
+  void sendJoystickSound(const char* rtttl)                    { SoundManager::sendToJoysticks(rtttl); }
+  void sendJoystickSoundToPlayer(int player, const char* rtttl){ SoundManager::sendToPlayer(player, rtttl); }
+  void stopSound()                         { SoundManager::stop(); }
 };
