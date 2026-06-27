@@ -8,6 +8,7 @@
 | 18   | Buzzer pasivo     | Signal                   |
 | 21   | Display SH1106    | SDA (I2C)                |
 | 22   | Display SH1106    | SCL (I2C)                |
+| 34   | Potenciómetro     | ADC — dificultad (input only) |
 
 ## Alimentación
 

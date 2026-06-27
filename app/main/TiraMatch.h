@@ -5,12 +5,17 @@
 #define SHOT_LEN         4    // largo del disparo en LEDs
 #define SHOT_SPEED       10   // ms por paso del disparo (menos = más rápido)
 #define SPAWN_INTERVAL     280  // ms inicial entre spawns (velocidad de arranque)
-#define SPAWN_INTERVAL_MIN  40  // ms mínimo entre spawns (velocidad máxima)
-#define SPAWN_ACCEL          0.5// ms que se reduce el intervalo por cada spawn
+#define SPAWN_INTERVAL_MIN  30  // ms mínimo entre spawns (velocidad máxima)
+#define SPAWN_ACCEL          0.5f  // ms que se reduce el intervalo por cada spawn (valor inicial)
+#define SPAWN_ACCEL_MATCH    0.1f // cuánto sube/baja spawnAccel por match/error
+#define MAX_SPAWN_ACCEL      0.8f  // techo de spawnAccel
 #define SEGMENT_LEN      8    // LEDs por bloque de color antes de cambiar
 #define EROSION_INTERVAL 4    // spawns del mismo jugador antes de borrar su LED más viejo
 #define SHIFT_STEPS      10   // LEDs desplazados hacia el oponente en un match
 #define SHIFT_STEP_MS    20   // ms por paso del desplazamiento (10 pasos = 200ms)
+
+#define POT_PIN         34    // GPIO ADC para potenciómetro de dificultad
+#define POT_READ_MS    200    // intervalo de lectura del pot (ms)
 
 // Sonidos del juego (formato RTTTL) — se reproducen en master Y se envían a los joysticks
 #define SND_SHOOT     "Shoot:d=16,o=5,b=160:b5,g5,d5"
@@ -58,7 +63,12 @@ private:
   int p2ColorIdx;
 
   CRGB*         spawnBuffer;
-  int           spawnIntervalMs; // intervalo actual (decrece con SPAWN_ACCEL)
+  float         spawnIntervalMs; // intervalo actual (decrece con SPAWN_ACCEL)
+  float         difficulty;      // 0.0=fácil, 1.0=difícil
+  int           effectiveSegLen; // SEGMENT_LEN ajustado por dificultad (= estado actual del buffer)
+  float         spawnAccel;      // aceleración actual del spawn (sube con matches, baja con errores)
+  float         spawnMult;       // multiplicador de velocidad de spawn
+  unsigned long lastPotRead;
   int           spawnTurn;       // 0=izquierda, 1=derecha
   int           leftLedInSeg;
   int           rightLedInSeg;
@@ -117,4 +127,6 @@ private:
   int  findFreeSlot();
   int  pickOtherColor(int current);
   int  nextColorInCycle(int current);
+  void readDifficulty();
+  void rescaleBuffer(int oldLen, int newLen);
 };

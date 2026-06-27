@@ -21,6 +21,7 @@ void TiraMatch::begin() {
   p1ColorIdx    = 0;
   p2ColorIdx    = 0;
   spawnIntervalMs = SPAWN_INTERVAL;
+  spawnAccel      = SPAWN_ACCEL;
   spawnTurn       = 0;
   leftLedInSeg   = 0;
   rightLedInSeg  = 0;
@@ -29,6 +30,12 @@ void TiraMatch::begin() {
   activeColors   = 3;
   leftColorIdx   = random(3);
   rightColorIdx  = random(3);
+
+  pinMode(POT_PIN, INPUT);
+  effectiveSegLen = SEGMENT_LEN; // valor base; readDifficulty lo ajusta sin rescalear (buffer vacío)
+  spawnMult       = 0.0f;        // sentinel: evita rescale de intervalo en primera lectura
+  readDifficulty();
+  spawnIntervalMs = SPAWN_INTERVAL * spawnMult;
 
   for (int i = 0; i < MAX_PARTICLES; i++) particles[i].active = false;
   lastParticleUpdate = millis();
@@ -45,12 +52,13 @@ void TiraMatch::begin() {
   goSweepStep    = 0;
 
   unsigned long now = millis();
-  lastMove      = now;
-  lastSpawn     = now;
-  lastShift     = now;
-  lastColorAdd  = now;
-  introActive   = true;
-  introStart    = now;
+  lastMove       = now;
+  lastSpawn      = now;
+  lastShift      = now;
+  lastColorAdd   = now;
+  lastPotRead    = now;
+  introActive    = true;
+  introStart     = now;
   lastIntroSound = now;
 
   clearLeds();
@@ -63,6 +71,11 @@ void TiraMatch::update() {
   if (gameOver)   { updateGameOver(); return; }
 
   unsigned long now = millis();
+
+  if (now - lastPotRead >= POT_READ_MS) {
+    lastPotRead = now;
+    readDifficulty();
+  }
 
   if (activeColors < 6 && now - lastColorAdd >= 20000) {
     activeColors++;
@@ -177,6 +190,7 @@ void TiraMatch::checkCollisions() {
             searchPos = nextHit;
           }
           startShift(1, shiftAmt);
+          spawnAccel = constrain(spawnAccel + SPAWN_ACCEL_MATCH, 0.0f, MAX_SPAWN_ACCEL);
         } else {
           addPenalty(1, shots[i].color);
         }
@@ -202,6 +216,7 @@ void TiraMatch::checkCollisions() {
             searchPos = nextHit;
           }
           startShift(-1, shiftAmt);
+          spawnAccel = constrain(spawnAccel + SPAWN_ACCEL_MATCH, 0.0f, MAX_SPAWN_ACCEL);
         } else {
           addPenalty(2, shots[i].color);
         }
@@ -287,7 +302,7 @@ void TiraMatch::spawnNextLed() {
       spawnBuffer[i] = spawnBuffer[i + 1];
     spawnBuffer[leftStart] = COLORS[leftColorIdx];
 
-    if (++leftLedInSeg == SEGMENT_LEN) {
+    if (++leftLedInSeg >= effectiveSegLen) {
       leftLedInSeg = 0;
       leftColorIdx = pickOtherColor(leftColorIdx);
     }
@@ -298,7 +313,7 @@ void TiraMatch::spawnNextLed() {
       spawnBuffer[i] = spawnBuffer[i - 1];
     spawnBuffer[rightStart] = COLORS[rightColorIdx];
 
-    if (++rightLedInSeg == SEGMENT_LEN) {
+    if (++rightLedInSeg >= effectiveSegLen) {
       rightLedInSeg = 0;
       rightColorIdx = pickOtherColor(rightColorIdx);
     }
@@ -308,12 +323,14 @@ void TiraMatch::spawnNextLed() {
 
   spawnTurn = 1 - spawnTurn;
 
-  if (spawnIntervalMs > SPAWN_INTERVAL_MIN)
-    spawnIntervalMs = max((float)SPAWN_INTERVAL_MIN, spawnIntervalMs - (float)SPAWN_ACCEL);
+  float effMin = SPAWN_INTERVAL_MIN * spawnMult;
+  if (spawnIntervalMs > effMin)
+    spawnIntervalMs = max(effMin, spawnIntervalMs - spawnAccel);
 }
 
 // Penalidad: escribe 8 LEDs directamente en el extremo más cercano al jugador del lado impactado
 void TiraMatch::addPenalty(int player, CRGB color) {
+  spawnAccel = constrain(spawnAccel - SPAWN_ACCEL_MATCH, 0.0f, MAX_SPAWN_ACCEL);
   sendJoystickSoundToPlayer(player, SND_MISS);
   int center     = spawnCenter;
   int leftStart  = center - 2;
@@ -653,4 +670,68 @@ int TiraMatch::pickOtherColor(int current) {
 
 int TiraMatch::nextColorInCycle(int current) {
   return (current + 1) % activeColors;
+}
+
+void TiraMatch::readDifficulty() {
+  // Promedio de 4 lecturas para reducir ruido del ADC
+  int sum = 0;
+  for (int i = 0; i < 4; i++) sum += analogRead(POT_PIN);
+  difficulty = constrain(sum / (4.0f * 4095.0f), 0.0f, 1.0f);
+
+  // SEGMENT_LEN: 14 (fácil, pot=0) → 8 (medio, pot=0.5) → 5 (difícil, pot=1)
+  int newSegLen;
+  if (difficulty < 0.5f)
+    newSegLen = (int)round(14.0f - difficulty * 2.0f * 6.0f);
+  else
+    newSegLen = (int)round(8.0f - (difficulty - 0.5f) * 2.0f * 3.0f);
+
+  // Multiplicador de intervalo: 1.3 (lento/fácil) → 1.0 (medio) → 0.5 (rápido/difícil)
+  float newMult;
+  if (difficulty < 0.5f)
+    newMult = 1.3f - difficulty * 0.6f;
+  else
+    newMult = 1.0f - (difficulty - 0.5f);
+
+  if (spawnMult > 0.0f && fabsf(newMult - spawnMult) > 0.001f) {
+    spawnIntervalMs = constrain(spawnIntervalMs * newMult / spawnMult,
+                                SPAWN_INTERVAL_MIN * newMult,
+                                (float)SPAWN_INTERVAL * newMult);
+  }
+  spawnMult = newMult;
+
+  if (newSegLen != effectiveSegLen) {
+    rescaleBuffer(effectiveSegLen, newSegLen);
+    effectiveSegLen = newSegLen;
+  }
+}
+
+void TiraMatch::rescaleBuffer(int oldLen, int newLen) {
+  if (oldLen <= 0 || newLen <= 0 || oldLen == newLen) return;
+
+  int leftStart  = spawnCenter - 2;
+  int rightStart = spawnCenter + 2;
+  CRGB* tmp = new CRGB[numLeds];
+  fill_solid(tmp, numLeds, CRGB::Black);
+
+  // Lado P1: origen en leftStart, se extiende hacia 0
+  for (int np = 0; np <= leftStart; np++) {
+    float oldDist = (float)(leftStart - np) * oldLen / newLen;
+    int   op      = leftStart - (int)round(oldDist);
+    if (op >= 0 && op <= leftStart)
+      tmp[np] = spawnBuffer[op];
+  }
+
+  // Lado P2: origen en rightStart, se extiende hacia numLeds-1
+  for (int np = rightStart; np < numLeds; np++) {
+    float oldDist = (float)(np - rightStart) * oldLen / newLen;
+    int   op      = rightStart + (int)round(oldDist);
+    if (op >= rightStart && op < numLeds)
+      tmp[np] = spawnBuffer[op];
+  }
+
+  for (int i = 0; i < numLeds; i++) spawnBuffer[i] = tmp[i];
+  delete[] tmp;
+
+  leftLedInSeg  = 0;
+  rightLedInSeg = 0;
 }
