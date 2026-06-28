@@ -11,6 +11,7 @@ public:
   virtual void begin() {}
   virtual void update() = 0;
   virtual void onInput(int player, int button) {}
+  virtual void onButtonUp(int player, int button) {}
 
 protected:
   CRGB* leds;

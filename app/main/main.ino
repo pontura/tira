@@ -5,6 +5,7 @@
 #include <WiFi.h>
 #include "SoundManager.h"
 #include "TiraMatch.h"
+#include "TiraTenis.h"
 
 #define LED_PIN     5
 #define NUM_LEDS    288
@@ -24,6 +25,7 @@ uint8_t pendingMAC[2][6]      = {{0},{0}};
 struct JoyInputPacket {
   uint8_t playerId;
   uint8_t button;
+  uint8_t pressed;  // 1=presionado, 0=soltado
 };
 
 struct MasterSoundPacket {
@@ -68,9 +70,10 @@ void registerPendingJoysticks() {
   }
 }
 
-volatile bool    joyPending = false;
-volatile uint8_t joyPlayer  = 0;
-volatile uint8_t joyButton  = 0;
+volatile bool    joyPending  = false;
+volatile uint8_t joyPlayer   = 0;
+volatile uint8_t joyButton   = 0;
+volatile uint8_t joyPressed  = 1;
 
 void onJoystickData(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
   if (len != sizeof(JoyInputPacket)) return;
@@ -84,6 +87,7 @@ void onJoystickData(const esp_now_recv_info_t* info, const uint8_t* data, int le
 
   joyPlayer  = pkt->playerId;
   joyButton  = pkt->button;
+  joyPressed = pkt->pressed;
   joyPending = true;
 }
 
@@ -115,7 +119,7 @@ void setup() {
   FastLED.clear();
   FastLED.show();
 
-  currentGame = new TiraMatch(leds, NUM_LEDS, &display);
+  currentGame = new TiraTenis(leds, NUM_LEDS, &display);
   currentGame->begin();
 }
 
@@ -124,7 +128,10 @@ void loop() {
 
   if (joyPending) {
     joyPending = false;
-    currentGame->onInput(joyPlayer, joyButton);
+    if (joyPressed)
+      currentGame->onInput(joyPlayer, joyButton);
+    else
+      currentGame->onButtonUp(joyPlayer, joyButton);
   }
   SoundManager::update();
   currentGame->update();

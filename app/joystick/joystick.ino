@@ -15,6 +15,7 @@ uint8_t masterMAC[] = { 0xC4, 0xDD, 0x57, 0x93, 0x35, 0xF0 };
 struct JoyInputPacket {
   uint8_t playerId;
   uint8_t button;    // 0=disparar, 1=cambiar color
+  uint8_t pressed;   // 1=presionado, 0=soltado
 };
 
 struct MasterSoundPacket {
@@ -22,9 +23,10 @@ struct MasterSoundPacket {
 };
 
 // ── Estado de botones ────────────────────────────────────────────────
-unsigned long lastFireMs  = 0;
-unsigned long lastColorMs = 0;
-#define DEBOUNCE_MS 200
+#define DEBOUNCE_MS 15
+const int btnPins[2]          = { BTN_FIRE, BTN_COLOR };
+bool      btnState[2]         = { false, false };
+unsigned long lastChangeMs[2] = { 0, 0 };
 
 // ── ESP-NOW callbacks ────────────────────────────────────────────────
 
@@ -34,8 +36,8 @@ void onDataRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
   rtttl::begin(BUZZER_PIN, pkt->rtttl);
 }
 
-void sendInput(uint8_t button) {
-  JoyInputPacket pkt = { PLAYER_ID, button };
+void sendInput(uint8_t button, uint8_t pressed) {
+  JoyInputPacket pkt = { PLAYER_ID, button, pressed };
   esp_now_send(masterMAC, (uint8_t*)&pkt, sizeof(pkt));
 }
 
@@ -79,13 +81,13 @@ void loop() {
 
   unsigned long now = millis();
 
-  if (!digitalRead(BTN_FIRE) && now - lastFireMs > DEBOUNCE_MS) {
-    lastFireMs = now;
-    sendInput(0);
-  }
+  for (int b = 0; b < 2; b++) {
+    bool isPressed = !digitalRead(btnPins[b]);
 
-  if (!digitalRead(BTN_COLOR) && now - lastColorMs > DEBOUNCE_MS) {
-    lastColorMs = now;
-    sendInput(1);
+    if (isPressed != btnState[b] && now - lastChangeMs[b] > DEBOUNCE_MS) {
+      lastChangeMs[b] = now;
+      btnState[b]     = isPressed;
+      sendInput(b, isPressed ? 1 : 0);
+    }
   }
 }
