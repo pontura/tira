@@ -248,7 +248,19 @@ void TiraTenis::renderFrame() {
   // Red (encima de todo excepto pelota)
   setLed(netPos, CRGB::White);
 
-  // Pelota: roja si está muerta, amarilla en cualquier otro estado
+  // Trail de la pelota (solo en rally, proporcional a velocidad)
+  if (state == TT_RALLY && fabsf(ballVel) > 0.01f) {
+    int   trailLen = (int)round(fabsf(ballVel) / TT_BALL_MAX_SPEED * TT_TRAIL_MAX_LEN);
+    trailLen = constrain(trailLen, 0, TT_TRAIL_MAX_LEN);
+    int   trailDir = (ballVel > 0) ? -1 : 1;  // trail va en sentido opuesto al movimiento
+    int   ballLed  = (int)round(ballPos);
+    for (int i = 1; i <= trailLen; i++) {
+      uint8_t brightness = (uint8_t)(255 * (trailLen - i + 1) / (float)(trailLen + 1));
+      setLed(ballLed + trailDir * i, CRGB(brightness, brightness, 0));
+    }
+  }
+
+  // Pelota: roja si está muerta, amarilla en cualquier otro estado (encima del trail)
   CRGB ballColor = (state == TT_BALL_DEAD) ? CRGB::Red : CRGB::Yellow;
   setLed((int)round(ballPos), ballColor);
 

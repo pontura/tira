@@ -27,6 +27,7 @@
 // ── Timing ────────────────────────────────────────────────────────────
 #define TT_UPDATE_MS         16     // ms por frame (~60fps)
 
+#define TT_TRAIL_MAX_LEN     5      // LEDs máximos de trail (a velocidad máxima)
 #define TT_BALL_STUCK_MS     200    // ms en el mismo LED para considerar la pelota muerta
 #define TT_DEAD_MS          1000    // ms que dura el freeze de pelota muerta
 
