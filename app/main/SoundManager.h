@@ -1,7 +1,7 @@
 #pragma once
 #include <Arduino.h>
 
-#define BUZZER_PIN 18  // GPIO para el buzzer pasivo
+#define BUZZER_PIN 14  // GPIO para el buzzer pasivo
 
 class SoundManager {
 public:

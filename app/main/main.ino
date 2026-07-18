@@ -3,15 +3,22 @@
 #include <Wire.h>
 #include <esp_now.h>
 #include <WiFi.h>
+#include <esp_wifi.h>
 #include "SoundManager.h"
+#include "MainMenu.h"
 #include "TiraMatch.h"
 #include "TiraTenis.h"
+#include "TiraZombies.h"
+#include "TiraGestures.h"
 
-#define LED_PIN     5
-#define NUM_LEDS    288
+#define LED_PIN     25
+#define NUM_LEDS    144
 #define BRIGHTNESS  50
 #define LED_TYPE    WS2812B
 #define COLOR_ORDER GRB
+
+#define GAME_COUNT  10
+#define MENU_RETURN_MS 2000   // mantener SW 2s en-juego para volver al menú
 
 // Dirección de broadcast para sonidos a todos los joysticks
 uint8_t broadcastMAC[] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
@@ -28,13 +35,81 @@ struct JoyInputPacket {
   uint8_t pressed;  // 1=presionado, 0=soltado
 };
 
+struct JoyAnalogPacket {
+  uint8_t playerId;
+  int16_t tiltX;
+  int16_t tiltY;
+};
+
 struct MasterSoundPacket {
   char rtttl[64];
 };
 
 CRGB leds[NUM_LEDS];
 U8G2_SH1106_128X64_NONAME_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE);
-GameBase* currentGame;
+bool displayOK = false;
+
+const char* gameNames[GAME_COUNT] = {
+  "TiraMatch", "TiraTenis", "TiraZombies",
+  "TiraGestures", "TiraPong", "TiraSnake",
+  "TiraBlocks", "TiraBreak", "TiraBattle",
+  "TiraArcade"
+};
+MainMenu    mainMenu(&display, gameNames, GAME_COUNT);
+GameBase*   currentGame = nullptr;
+int         currentGameIdx = -1;
+
+// Estado del botón SW del joystick local para volver al menú
+bool          swHeld    = false;
+unsigned long swHeldMs  = 0;
+
+void returnToMenu() {
+  SoundManager::stop();
+  noTone(BUZZER_PIN);
+  delete currentGame;
+  currentGame    = nullptr;
+  currentGameIdx = -1;
+  swHeld         = false;
+  mainMenu.begin();
+}
+
+void switchGame(int idx) {
+  SoundManager::stop();
+  noTone(BUZZER_PIN);
+  delete currentGame;
+  currentGame    = nullptr;
+  currentGameIdx = idx;
+
+  // Juegos demo (sin implementación): mostrar "Coming soon" y volver al menú
+  if (idx > 3) {
+    if (displayOK) {
+      display.clearBuffer();
+      display.setFont(u8g2_font_7x14B_tr);
+      display.drawStr(4, 28, gameNames[idx]);
+      display.setFont(u8g2_font_5x7_tr);
+      display.drawStr(4, 46, "Coming soon...");
+      display.sendBuffer();
+      delay(1200);
+    }
+    returnToMenu();
+    return;
+  }
+
+  switch (idx) {
+    case 0: currentGame = new TiraMatch(leds, NUM_LEDS, &display);    break;
+    case 1: currentGame = new TiraTenis(leds, NUM_LEDS, &display);    break;
+    case 2: currentGame = new TiraZombies(leds, NUM_LEDS, &display);  break;
+    case 3: currentGame = new TiraGestures(leds, NUM_LEDS, &display); break;
+  }
+  if (displayOK) {
+    display.clearBuffer();
+    display.setFont(u8g2_font_7x14B_tr);
+    display.drawStr(4, 36, gameNames[idx]);
+    display.sendBuffer();
+    delay(800);
+  }
+  currentGame->begin();
+}
 
 // Envía sonido a todos los joysticks
 void sendSoundToJoysticks(const char* rtttl) {
@@ -62,8 +137,9 @@ void registerPendingJoysticks() {
       memcpy(joystickMAC[i], pendingMAC[i], 6);
       esp_now_peer_info_t peer = {};
       memcpy(peer.peer_addr, joystickMAC[i], 6);
-      peer.channel = 0;
+      peer.channel = 1;
       peer.encrypt = false;
+      peer.ifidx = WIFI_IF_STA;
       esp_now_add_peer(&peer);
       joystickKnown[i] = true;
     }
@@ -75,8 +151,31 @@ volatile uint8_t joyPlayer   = 0;
 volatile uint8_t joyButton   = 0;
 volatile uint8_t joyPressed  = 1;
 
+volatile bool    analogPending = false;
+volatile uint8_t analogPlayer  = 0;
+volatile int16_t analogTiltX   = 0;
+volatile int16_t analogTiltY   = 0;
+
 void onJoystickData(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
-  if (len != sizeof(JoyInputPacket)) return;
+  if (len == sizeof(JoyAnalogPacket)) {
+    const JoyAnalogPacket* pkt = (const JoyAnalogPacket*)data;
+    int idx = pkt->playerId - 1;
+    if (idx >= 0 && idx < 2 && !joystickKnown[idx] && !pendingRegister[idx]) {
+      Serial.printf("[ESP-NOW] Joystick %d conectado\n", pkt->playerId);
+      memcpy(pendingMAC[idx], info->src_addr, 6);
+      pendingRegister[idx] = true;
+    }
+    analogPlayer  = pkt->playerId;
+    analogTiltX   = pkt->tiltX;
+    analogTiltY   = pkt->tiltY;
+    analogPending = true;
+    return;
+  }
+  if (len != sizeof(JoyInputPacket)) {
+    Serial.printf("[ESP-NOW] pkt desconocido len=%d (analog=%d input=%d)\n",
+                  len, (int)sizeof(JoyAnalogPacket), (int)sizeof(JoyInputPacket));
+    return;
+  }
   const JoyInputPacket* pkt = (const JoyInputPacket*)data;
 
   int idx = pkt->playerId - 1;
@@ -85,6 +184,7 @@ void onJoystickData(const esp_now_recv_info_t* info, const uint8_t* data, int le
     pendingRegister[idx] = true;
   }
 
+  Serial.printf("[BTN] p=%d b=%d %s\n", pkt->playerId, pkt->button, pkt->pressed ? "DOWN" : "UP");
   joyPlayer  = pkt->playerId;
   joyButton  = pkt->button;
   joyPressed = pkt->pressed;
@@ -94,17 +194,32 @@ void onJoystickData(const esp_now_recv_info_t* info, const uint8_t* data, int le
 void setup() {
   Serial.begin(115200);
 
+  WiFi.persistent(false);
   WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  delay(300);
+  esp_wifi_set_ps(WIFI_PS_NONE);
+  esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
   Serial.print("Master MAC: ");
   Serial.println(WiFi.macAddress());
 
-  esp_now_init();
-  esp_now_register_recv_cb(onJoystickData);
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("[ESP-NOW] init FAILED");
+    return;
+  }
+  Serial.println("[ESP-NOW] init OK");
+  if (esp_now_register_recv_cb(onJoystickData) != ESP_OK) {
+    Serial.println("[ESP-NOW] register_recv_cb FAILED");
+    return;
+  }
+  Serial.println("[ESP-NOW] callback OK");
+  Serial.printf("Canal confirmado: %d\n", WiFi.channel());
 
   esp_now_peer_info_t peer = {};
   memcpy(peer.peer_addr, broadcastMAC, 6);
-  peer.channel = 0;
+  peer.channel = 1;
   peer.encrypt = false;
+  peer.ifidx = WIFI_IF_STA;
   esp_now_add_peer(&peer);
 
   SoundManager::begin();
@@ -112,27 +227,51 @@ void setup() {
   SoundManager::setOnJoystickCallback(sendSoundToJoysticks);
   SoundManager::setOnPlayerCallback(sendSoundToPlayer);
 
-  display.begin();
+  displayOK = display.begin();
+  if (displayOK) display.setContrast(255);
+  Serial.printf("[DISPLAY] %s\n", displayOK ? "OK" : "no responde — desactivada");
 
   FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS);
   FastLED.setBrightness(BRIGHTNESS);
   FastLED.clear();
   FastLED.show();
 
-  currentGame = new TiraTenis(leds, NUM_LEDS, &display);
-  currentGame->begin();
+  mainMenu.begin();
 }
 
 void loop() {
   registerPendingJoysticks();
 
-  if (joyPending) {
-    joyPending = false;
-    if (joyPressed)
-      currentGame->onInput(joyPlayer, joyButton);
-    else
-      currentGame->onButtonUp(joyPlayer, joyButton);
+  if (currentGame == nullptr) {
+    // ── En menú principal ──────────────────────────────────────────────
+    int toLaunch = mainMenu.update();
+    if (toLaunch >= 0) switchGame(toLaunch);
+  } else {
+    // ── En juego ──────────────────────────────────────────────────────
+    // Joystick izquierda (VRX) → volver al menú
+    if ((MENU_CENTER - analogRead(MENU_VRX_PIN)) > MENU_DEADZONE) {
+      returnToMenu();
+      return;
+    }
+
+    // SW local: mantener 2s para volver al menú (fallback)
+    bool sw = !digitalRead(MENU_SW_PIN);
+    if (sw && !swHeld) { swHeld = true; swHeldMs = millis(); }
+    if (!sw)             swHeld = false;
+    if (swHeld && millis() - swHeldMs >= MENU_RETURN_MS) returnToMenu();
+
+    if (analogPending) {
+      analogPending = false;
+      currentGame->onAnalog(analogPlayer, analogTiltX, analogTiltY);
+    }
+    if (joyPending) {
+      joyPending = false;
+      if (joyPressed)
+        currentGame->onInput(joyPlayer, joyButton);
+      else
+        currentGame->onButtonUp(joyPlayer, joyButton);
+    }
+    SoundManager::update();
+    currentGame->update();
   }
-  SoundManager::update();
-  currentGame->update();
 }

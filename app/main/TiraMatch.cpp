@@ -15,6 +15,7 @@ TiraMatch::~TiraMatch() {
 }
 
 void TiraMatch::begin() {
+  Serial.println("[TM] begin");
   for (int i = 0; i < MAX_SHOTS; i++) shots[i].active = false;
   fill_solid(spawnBuffer, numLeds, CRGB::Black);
 
@@ -31,16 +32,14 @@ void TiraMatch::begin() {
   leftColorIdx   = random(3);
   rightColorIdx  = random(3);
 
-  pinMode(POT_PIN, INPUT);
-  effectiveSegLen = SEGMENT_LEN; // valor base; readDifficulty lo ajusta sin rescalear (buffer vacío)
-  spawnMult       = 0.0f;        // sentinel: evita rescale de intervalo en primera lectura
-  readDifficulty();
+  spawnCenter    = numLeds / 2;
+
+  effectiveSegLen = SEGMENT_LEN;
+  spawnMult       = 1.0f;        // dificultad media fija
   spawnIntervalMs = SPAWN_INTERVAL * spawnMult;
 
   for (int i = 0; i < MAX_PARTICLES; i++) particles[i].active = false;
   lastParticleUpdate = millis();
-
-  spawnCenter    = numLeds / 2;
   shiftRemaining = 0;
   shiftDir       = 0;
   gameOver       = false;
@@ -56,30 +55,29 @@ void TiraMatch::begin() {
   lastSpawn      = now;
   lastShift      = now;
   lastColorAdd   = now;
-  lastPotRead    = now;
   introActive    = true;
   introStart     = now;
   lastIntroSound = now;
 
+  Serial.println("[TM] clearLeds...");
   clearLeds();
+  Serial.println("[TM] updateDisplay...");
   updateDisplay();
-  Serial.println("TiraMatch. 1/2=disparar  9/0=cambiar color");
+  Serial.println("[TM] begin done");
 }
 
 void TiraMatch::update() {
+  static bool firstUpdate = true;
+  if (firstUpdate) { firstUpdate = false; Serial.println("[TM] first update"); }
   if (introActive) { updateIntro(); return; }
   if (gameOver)   { updateGameOver(); return; }
 
   unsigned long now = millis();
 
-  if (now - lastPotRead >= POT_READ_MS) {
-    lastPotRead = now;
-    readDifficulty();
-  }
-
   if (activeColors < 6 && now - lastColorAdd >= 20000) {
     activeColors++;
     lastColorAdd = now;
+    // Recalculate tilt zones with new boundaries (no hysteresis at zone-count change)
   }
 
   if (Serial.available()) {
@@ -123,10 +121,7 @@ void TiraMatch::onInput(int player, int button) {
   if (button == 0) {
     fire(player);
   } else {
-    if (player == 1) p1ColorIdx = nextColorInCycle(p1ColorIdx);
-    else             p2ColorIdx = nextColorInCycle(p2ColorIdx);
-    sendJoystickSoundToPlayer(player, SND_COLOR);
-    updateDisplay();
+    colorChange(player, +1);
   }
 }
 
@@ -449,6 +444,8 @@ void TiraMatch::renderSpawner() {
 }
 
 void TiraMatch::updateIntro() {
+  static bool firstIntro = true;
+  if (firstIntro) { firstIntro = false; Serial.println("[TM] updateIntro enter"); }
   unsigned long now     = millis();
   unsigned long elapsed = now - introStart;
 
@@ -458,14 +455,13 @@ void TiraMatch::updateIntro() {
   int   leftPos  = pos;
   int   rightPos = numLeds - 1 - pos;
 
-  // Actualizar tono cada 30ms (agudo → medio)
-  if (now - lastIntroSound >= 30) {
-    lastIntroSound = now;
-    int freq = (int)(4000.0f - progress * (4000.0f - 600.0f));
-    tone(BUZZER_PIN, freq);
-  }
+  // Actualizar tono y render cada 30ms
+  if (now - lastIntroSound < 30) return;
+  lastIntroSound = now;
 
-  // Render: solo los dos LEDs blancos
+  int freq = (int)(4000.0f - progress * (4000.0f - 600.0f));
+  tone(BUZZER_PIN, freq);
+
   fill_solid(leds, numLeds, CRGB::Black);
   leds[leftPos]  = CRGB::White;
   leds[rightPos] = CRGB::White;
@@ -618,7 +614,9 @@ void TiraMatch::updateGameOver() {
     return;
   }
 
-  // GO_DONE: pantalla estática ya mostrada
+  if (goPhase == GO_DONE) {
+    begin();
+  }
 }
 
 void TiraMatch::renderBlinkFrame() {
@@ -672,37 +670,11 @@ int TiraMatch::nextColorInCycle(int current) {
   return (current + 1) % activeColors;
 }
 
-void TiraMatch::readDifficulty() {
-  // Promedio de 4 lecturas para reducir ruido del ADC
-  int sum = 0;
-  for (int i = 0; i < 4; i++) sum += analogRead(POT_PIN);
-  difficulty = constrain(sum / (4.0f * 4095.0f), 0.0f, 1.0f);
-
-  // SEGMENT_LEN: 14 (fácil, pot=0) → 8 (medio, pot=0.5) → 5 (difícil, pot=1)
-  int newSegLen;
-  if (difficulty < 0.5f)
-    newSegLen = (int)round(14.0f - difficulty * 2.0f * 6.0f);
-  else
-    newSegLen = (int)round(8.0f - (difficulty - 0.5f) * 2.0f * 3.0f);
-
-  // Multiplicador de intervalo: 1.3 (lento/fácil) → 1.0 (medio) → 0.5 (rápido/difícil)
-  float newMult;
-  if (difficulty < 0.5f)
-    newMult = 1.3f - difficulty * 0.6f;
-  else
-    newMult = 1.0f - (difficulty - 0.5f);
-
-  if (spawnMult > 0.0f && fabsf(newMult - spawnMult) > 0.001f) {
-    spawnIntervalMs = constrain(spawnIntervalMs * newMult / spawnMult,
-                                SPAWN_INTERVAL_MIN * newMult,
-                                (float)SPAWN_INTERVAL * newMult);
-  }
-  spawnMult = newMult;
-
-  if (newSegLen != effectiveSegLen) {
-    rescaleBuffer(effectiveSegLen, newSegLen);
-    effectiveSegLen = newSegLen;
-  }
+void TiraMatch::colorChange(int player, int delta) {
+  if (player == 1) p1ColorIdx = (p1ColorIdx + delta + activeColors) % activeColors;
+  else             p2ColorIdx = (p2ColorIdx + delta + activeColors) % activeColors;
+  sendJoystickSoundToPlayer(player, SND_COLOR);
+  updateDisplay();
 }
 
 void TiraMatch::rescaleBuffer(int oldLen, int newLen) {
@@ -734,4 +706,7 @@ void TiraMatch::rescaleBuffer(int oldLen, int newLen) {
 
   leftLedInSeg  = 0;
   rightLedInSeg = 0;
+}
+
+void TiraMatch::onAnalog(int /*player*/, int16_t /*tiltX*/, int16_t /*tiltY*/) {
 }

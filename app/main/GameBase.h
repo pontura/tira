@@ -12,6 +12,7 @@ public:
   virtual void update() = 0;
   virtual void onInput(int player, int button) {}
   virtual void onButtonUp(int player, int button) {}
+  virtual void onAnalog(int player, int16_t tiltX, int16_t tiltY) {}
 
 protected:
   CRGB* leds;

@@ -1,35 +1,46 @@
 #pragma once
 #include "GameBase.h"
 
-// ── Posición inicial (LEDs desde el extremo de cada jugador) ──────────
-#define TT_P1_START          20     // P1 empieza a 20 LEDs del extremo izquierdo
-#define TT_P2_START          20     // P2 empieza a 20 LEDs del extremo derecho
+// ── Posición inicial ───────────────────────────────────────────────────
+#define TT_SERVE_POS         6    // posición de saque (LEDs desde el extremo)
 
-// ── Parámetros de movimiento ──────────────────────────────────────────
-#define TT_ACCEL             0.4f   // ganancia de velocidad por frame con botón presionado (LEDs/frame²)
-#define TT_DECEL             0.82f  // fricción por frame al soltar (0=para instantáneo, 1=no para)
-#define TT_MAX_SPEED         0.8f   // velocidad máxima del jugador (LEDs/frame)
+// ── Movimiento del jugador ─────────────────────────────────────────────
+#define TT_ACCEL             0.4f
+#define TT_DECEL             0.82f
+#define TT_MAX_SPEED         0.8f
 
-// ── Parámetros del saque ──────────────────────────────────────────────
-#define TT_SERVE_PERIOD_MS   1600   // duración de un ciclo completo de la animación del saque (ms)
-#define TT_SERVE_TRAVEL      20     // LEDs totales que recorre la pelota durante el saque
+// ── Saque ──────────────────────────────────────────────────────────────
+#define TT_SERVE_PERIOD_MS   1600
+#define TT_SERVE_TRAVEL      20
 
-// ── Parámetros del golpe ──────────────────────────────────────────────
-#define TT_HIT_LEN           10     // LEDs azules del hit (zona de golpe)
-#define TT_HIT_MS            500    // duración del efecto visual del golpe (ms)
+// ── Hit (zona azul) ───────────────────────────────────────────────────
+#define TT_HIT_LEN           13
+#define TT_HIT_MS            200
 
-// ── Parámetros de la pelota en rally ─────────────────────────────────
-#define TT_BALL_MAX_SPEED    3.2f   // velocidad al 100% de fuerza (LEDs/frame)
-#define TT_BALL_MIN_SPEED    0.4f   // velocidad al 10% de fuerza (LEDs/frame)
-#define TT_BALL_DECEL        0.99f // fricción de la pelota por frame en rally (1.0=sin fricción)
-#define TT_HIT_RANGE         20     // distancia máxima al jugador para que el hit sea válido (LEDs)
+// ── Trayectoria de la pelota ───────────────────────────────────────────
+#define TT_BALL_LEDS_MAX     200    // LEDs totales al 100% de potencia (drive)
+#define TT_BALL_LEDS_MIN     25     // LEDs totales al 10% de potencia (drive)
+#define TT_BALL_TIME_MAX_MS  2000   // ms al 100% de potencia (drive)
+#define TT_BALL_TIME_MIN_MS  1500   // ms al 10% de potencia (drive)
+#define TT_SERVE_LEDS_MAX    200    // LEDs totales al 100% de potencia (saque)
+#define TT_SERVE_LEDS_MIN    80    // LEDs totales al 10% de potencia (saque)
+#define TT_LOB_LEDS_MAX      150    // LEDs totales al 100% de potencia (lob)
+#define TT_LOB_LEDS_MIN      30    // LEDs totales al 10% de potencia (lob)
+#define TT_LOB_TIME_MAX_MS   3000   // ms al 100% de potencia (lob)
+#define TT_LOB_TIME_MIN_MS   1500   // ms al 10% de potencia (lob)
+
+// ── Pelota muerta ─────────────────────────────────────────────────────
+#define TT_DEAD_BALL_MS       250    // fase 1: pelota roja moviéndose
+#define TT_DEAD_COURT_MS      500    // fase 2: cancha del perdedor roja
+#define TT_DEAD_ERASE_MS      15     // fase 3: ms por LED borrado aleatorio
+#define TT_POST_HIT_FREEZE_MS 1000
+
+#define SND_HIT      "Hit:d=32,o=6,b=220:c6,c7"
+#define SND_LOB      "Lob:d=16,o=4,b=180:c4,g4"
+#define SND_GAMEOVER "game over:o=5,d=32,b=400:c#,d,4e,4c#,4d,4b4,4c#,4a4,4b4,4p"
 
 // ── Timing ────────────────────────────────────────────────────────────
-#define TT_UPDATE_MS         16     // ms por frame (~60fps)
-
-#define TT_TRAIL_MAX_LEN     5      // LEDs máximos de trail (a velocidad máxima)
-#define TT_BALL_STUCK_MS     200    // ms en el mismo LED para considerar la pelota muerta
-#define TT_DEAD_MS          1000    // ms que dura el freeze de pelota muerta
+#define TT_UPDATE_MS         16
 
 enum TennisState { TT_SERVING, TT_HITTING, TT_RALLY, TT_BALL_DEAD };
 
@@ -39,33 +50,76 @@ public:
   void begin()                            override;
   void update()                           override;
   void onInput(int player, int button)    override;
-  void onButtonUp(int player, int button) override;
+  void onAnalog(int player, int16_t tiltX, int16_t tiltY) override;
 
 private:
   TennisState   state;
-  int           servingPlayer;  // 0=P1, 1=P2
-  float         pos[2];         // posición de cada jugador (float para suavidad)
-  float         vel[2];         // velocidad del jugador
-  bool          held[2][2];     // held[player][button]
-  float         ballPos;        // posición actual de la pelota
-  float         ballVel;        // velocidad de la pelota en rally (LEDs/frame, signed)
-  unsigned long serveStart;     // momento en que arrancó el saque actual
-  unsigned long hitStart;       // momento en que arrancó el golpe
-  int           hittingPlayer;  // quién está golpeando (0 o 1)
-  bool          hitSuccess;     // si la pelota estaba en la zona al golpear
-  float         hitStrength;    // 0.1..1.0 según posición de la pelota en zona
-  bool          hitFromServe;   // true si el hit fue desde saque (para saber a qué volver)
-  int           lastBallLed;    // último LED entero donde estuvo la pelota
-  unsigned long sameledStart;   // millis() cuando la pelota llegó al LED actual
-  unsigned long deadStart;      // millis() cuando arrancó el estado de pelota muerta
-  int           netPos;            // LED central (red)
+  int           servingPlayer;
+  unsigned long serveStart;
+  float         pos[2];
+  float         vel[2];
+  float         tilt[2];
+  int           netPos;
   unsigned long lastUpdate;
 
+  // ── Pelota ────────────────────────────────────────────────────────
+  float         ballPos;
+  float         shadowPos;
+  int           ballDir;        // +1 o -1
+
+  // Trayectoria pendiente (se guarda durante TT_HITTING)
+  float         pendingBallStart;
+  float         pendingTotalLeds;
+  float         pendingTotalMs;
+  int           lastHitter;
+  bool          isLob;
+  unsigned long rallyStartTime;
+  unsigned long playerFrozenUntil[2]; // jugador congelado hasta este timestamp
+
+  // Segmento actual de la trayectoria
+  int           ballSeg;          // 0 o 1
+  float         segStartPos;      // posición del inicio del segmento
+  float         segLen;           // LEDs del segmento (sin signo)
+  float         segMs;            // duración del segmento
+  unsigned long segStartTime;
+  float         shadowSegStart;   // posición inicial de la sombra en este segmento
+
+  // Marca de pique
+  float         bounceMarkPos;
+  unsigned long bounceMarkTime;
+
+  // Pelota muerta
+  unsigned long deadStart;
+  int           loserPlayer;
+  float         deadBallVel;
+  int           deadEraseArr[144]; // índices de LEDs restantes en fase 3
+  int           deadEraseCount;    // -1=no iniciada, ≥0=LEDs restantes
+  unsigned long deadEraseTimer;
+
+  // Hit
+  bool          hitSuccess;
+  float         hitStrength;
+  bool          hitFromServe;
+  bool          hitIsLob;
+  int           hittingPlayer;
+  unsigned long hitStart;
+  int           hitAnimStep;       // LEDs blancos activos (0..TT_HIT_LEN)
+  int           hitAnimPhase;      // 0=avanzando, 1=retrocediendo
+  unsigned long hitAnimStepTime;
+  bool          hitAnimActive;     // animación de miss corriendo durante TT_RALLY
+
+  bool          introActive;
+  int           introPhase;        // 0=approach, 1=walkin
+  unsigned long introStart;
+  unsigned long introPhaseStart;
+
+  void  updateIntro();
   void  updateServe();
   void  updateHitting();
   void  updateRally();
   void  updateDead();
-  void  triggerHit(int p, bool fromServe);
+  void  startSegment(int seg);
+  void  triggerHit(int p, bool fromServe, bool lob = false);
   void  renderFrame();
   float serveBallFraction(unsigned long elapsed);
 };

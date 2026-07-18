@@ -7,19 +7,16 @@
 #define SPAWN_INTERVAL     280  // ms inicial entre spawns (velocidad de arranque)
 #define SPAWN_INTERVAL_MIN  30  // ms mínimo entre spawns (velocidad máxima)
 #define SPAWN_ACCEL          0.5f  // ms que se reduce el intervalo por cada spawn (valor inicial)
-#define SPAWN_ACCEL_MATCH    0.1f // cuánto sube/baja spawnAccel por match/error
-#define MAX_SPAWN_ACCEL      0.8f  // techo de spawnAccel
+#define SPAWN_ACCEL_MATCH    0.4f  // cuánto sube/baja spawnAccel por match/error
+#define MAX_SPAWN_ACCEL      2.0f  // techo de spawnAccel
 #define SEGMENT_LEN      8    // LEDs por bloque de color antes de cambiar
 #define EROSION_INTERVAL 4    // spawns del mismo jugador antes de borrar su LED más viejo
 #define SHIFT_STEPS      10   // LEDs desplazados hacia el oponente en un match
 #define SHIFT_STEP_MS    20   // ms por paso del desplazamiento (10 pasos = 200ms)
 
-#define POT_PIN         34    // GPIO ADC para potenciómetro de dificultad
-#define POT_READ_MS    200    // intervalo de lectura del pot (ms)
-
 // Sonidos del juego (formato RTTTL) — se reproducen en master Y se envían a los joysticks
-#define SND_SHOOT     "Shoot:d=16,o=5,b=160:b5,g5,d5"
-#define SND_COLOR     "Color:d=32,o=5,b=160:c5"
+#define SND_SHOOT     "Shoot:d=16,o=5,b=200:b6,g4,c3"
+#define SND_COLOR     "Color:d=32,o=4,b=240:g3"
 #define SND_MISS      "Miss:d=16,o=4,b=120:e4,b3"
 #define SND_EXPLOSION "Expl:d=16,o=3,b=100:c4,a3,g3,f3"
 
@@ -51,24 +48,38 @@ public:
   TiraMatch(CRGB* leds, int numLeds, U8G2* display);
   ~TiraMatch();
 
-  void begin()  override;
-  void update() override;
+  void begin()   override;
+  void update()  override;
   void onInput(int player, int button) override;
+  void onAnalog(int player, int16_t tiltX, int16_t tiltY) override;
+
+protected:
+  bool          introActive;
+  unsigned long introStart;
+  unsigned long lastIntroSound;
+
+  bool          gameOver;
+  int           loser;
+
+  int           p1ColorIdx;
+  int           p2ColorIdx;
+
+  static const CRGB COLORS[6];
+  int           activeColors;
+  unsigned long lastColorAdd;
+
+  void fire(int player);
+  void colorChange(int player, int delta); // +1=next, -1=prev
 
 private:
   Shot          shots[MAX_SHOTS];
   unsigned long lastMove;
 
-  int p1ColorIdx;
-  int p2ColorIdx;
-
   CRGB*         spawnBuffer;
   float         spawnIntervalMs; // intervalo actual (decrece con SPAWN_ACCEL)
-  float         difficulty;      // 0.0=fácil, 1.0=difícil
   int           effectiveSegLen; // SEGMENT_LEN ajustado por dificultad (= estado actual del buffer)
   float         spawnAccel;      // aceleración actual del spawn (sube con matches, baja con errores)
   float         spawnMult;       // multiplicador de velocidad de spawn
-  unsigned long lastPotRead;
   int           spawnTurn;       // 0=izquierda, 1=derecha
   int           leftLedInSeg;
   int           rightLedInSeg;
@@ -86,23 +97,12 @@ private:
   int           shiftDir;
   unsigned long lastShift;
 
-  bool          introActive;
-  unsigned long introStart;
-  unsigned long lastIntroSound;
-
-  bool          gameOver;
-  int           loser;
   GoPhase       goPhase;
   int           goBlinkCount;
   bool          goBlinkOn;
   unsigned long goTimer;
   int           goSweepStep;
 
-  static const CRGB COLORS[6];
-  int           activeColors;
-  unsigned long lastColorAdd;
-
-  void fire(int player);
   void moveShots();
   void checkCollisions();
   void explodeAndDestroy(int hitIdx, int minBound, int maxBound, int explosionDir);
@@ -127,6 +127,5 @@ private:
   int  findFreeSlot();
   int  pickOtherColor(int current);
   int  nextColorInCycle(int current);
-  void readDifficulty();
   void rescaleBuffer(int oldLen, int newLen);
 };
