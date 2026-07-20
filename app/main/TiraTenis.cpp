@@ -40,6 +40,13 @@ void TiraTenis::begin() {
   for (int p = 0; p < 2; p++)
     playerFrozenUntil[p] = 0;
 
+  score[0] = score[1] = 0;
+  winner       = 0;
+  goPhase      = 0;
+  goTimer      = 0;
+  goFillStep   = 0;
+  goEraseCount = 0;
+
   introActive     = true;
   introPhase      = 0;
   introStart      = millis();
@@ -344,7 +351,21 @@ void TiraTenis::updateDead() {
   // ── Fase 3: borrado aleatorio de LEDs ─────────────────────────────
   if (deadEraseCount >= 0) {
     if (deadEraseCount == 0) {
-      // Todos borrados → reanuda
+      // Otorgar punto al ganador del rally
+      int w = 1 - loserPlayer;
+      score[w]++;
+      if (score[w] >= TT_WIN_SCORE) {
+        winner      = w;
+        goPhase     = 0;
+        goFillStep  = 0;
+        goEraseCount = 0;
+        goTimer     = millis();
+        fill_solid(leds, numLeds, CRGB::Black);
+        FastLED.show();
+        state = TT_GAME_OVER;
+        return;
+      }
+      // Reanuda con nuevo saque
       servingPlayer = 1 - loserPlayer;
       serveStart    = millis();
       pos[0]        = TT_SERVE_POS;
@@ -383,6 +404,7 @@ void TiraTenis::update() {
   if (now - lastUpdate < TT_UPDATE_MS) return;
   lastUpdate = now;
 
+  if      (state == TT_GAME_OVER) { updateGameOver(); return; }
   if      (state == TT_SERVING)   updateServe();
   else if (state == TT_HITTING)   updateHitting();
   else if (state == TT_RALLY)     updateRally();
@@ -423,9 +445,58 @@ void TiraTenis::onAnalog(int player, int16_t /*tiltX*/, int16_t tiltY) {
   else                  tilt[p] = constrain(tiltY / 16384.0f, -1.0f, 1.0f);
 }
 
+// ── Score: LEDs naranja desde cada extremo hacia el centro (capa base) ─
+void TiraTenis::renderScoreLeds() {
+  CRGB orange = CRGB(255, 80, 0); orange.nscale8(60);
+  for (int i = 0; i < score[0]; i++) setLed(i, orange);
+  for (int i = 0; i < score[1]; i++) setLed(numLeds - 1 - i, orange);
+}
+
+// ── Game over: fill blanco → espera → apagado aleatorio → begin() ─────
+void TiraTenis::updateGameOver() {
+  unsigned long now = millis();
+  int halfStart = (winner == 0) ? 0       : netPos + 1;
+  int halfEnd   = (winner == 0) ? netPos  : numLeds;
+  int halfSize  = halfEnd - halfStart;
+
+  if (goPhase == 0) {
+    if (now - goTimer >= TT_GO_STEP_MS) {
+      goTimer = now;
+      int led = (winner == 0) ? netPos - 1 - goFillStep
+                              : netPos + 1 + goFillStep;
+      leds[constrain(led, 0, numLeds - 1)] = CRGB::White;
+      FastLED.show();
+      if (++goFillStep >= halfSize) {
+        goPhase = 1;
+        goTimer = now;
+      }
+    }
+  } else if (goPhase == 1) {
+    if (now - goTimer >= TT_GO_WAIT_MS) {
+      goEraseCount = 0;
+      for (int i = halfStart; i < halfEnd; i++)
+        goEraseArr[goEraseCount++] = i;
+      goPhase = 2;
+      goTimer = now;
+    }
+  } else if (goPhase == 2) {
+    if (goEraseCount == 0) { goPhase = 3; return; }
+    if (now - goTimer >= TT_GO_STEP_MS) {
+      goTimer = now;
+      int r = random(0, goEraseCount);
+      leds[goEraseArr[r]] = CRGB::Black;
+      goEraseArr[r] = goEraseArr[--goEraseCount];
+      FastLED.show();
+    }
+  } else {
+    begin();
+  }
+}
+
 // ── Render ────────────────────────────────────────────────────────────
 void TiraTenis::renderFrame() {
   clearLeds();
+  renderScoreLeds();
 
   // ── Game over: render especial ────────────────────────────────────
   if (state == TT_BALL_DEAD) {

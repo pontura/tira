@@ -20,20 +20,23 @@
 // ── Trayectoria de la pelota ───────────────────────────────────────────
 #define TT_BALL_LEDS_MAX     200    // LEDs totales al 100% de potencia (drive)
 #define TT_BALL_LEDS_MIN     25     // LEDs totales al 10% de potencia (drive)
-#define TT_BALL_TIME_MAX_MS  2000   // ms al 100% de potencia (drive)
-#define TT_BALL_TIME_MIN_MS  1500   // ms al 10% de potencia (drive)
+#define TT_BALL_TIME_MAX_MS  2200   // ms al 100% de potencia (drive)
+#define TT_BALL_TIME_MIN_MS  1800   // ms al 10% de potencia (drive)
 #define TT_SERVE_LEDS_MAX    200    // LEDs totales al 100% de potencia (saque)
 #define TT_SERVE_LEDS_MIN    80    // LEDs totales al 10% de potencia (saque)
 #define TT_LOB_LEDS_MAX      150    // LEDs totales al 100% de potencia (lob)
 #define TT_LOB_LEDS_MIN      30    // LEDs totales al 10% de potencia (lob)
-#define TT_LOB_TIME_MAX_MS   3000   // ms al 100% de potencia (lob)
-#define TT_LOB_TIME_MIN_MS   1500   // ms al 10% de potencia (lob)
+#define TT_LOB_TIME_MAX_MS   4000   // ms al 100% de potencia (lob)
+#define TT_LOB_TIME_MIN_MS   2200   // ms al 10% de potencia (lob)
 
 // ── Pelota muerta ─────────────────────────────────────────────────────
 #define TT_DEAD_BALL_MS       250    // fase 1: pelota roja moviéndose
 #define TT_DEAD_COURT_MS      500    // fase 2: cancha del perdedor roja
 #define TT_DEAD_ERASE_MS      15     // fase 3: ms por LED borrado aleatorio
 #define TT_POST_HIT_FREEZE_MS 1000
+#define TT_WIN_SCORE          5
+#define TT_GO_STEP_MS         30
+#define TT_GO_WAIT_MS         3000
 
 #define SND_HIT      "Hit:d=32,o=6,b=220:c6,c7"
 #define SND_LOB      "Lob:d=16,o=4,b=180:c4,g4"
@@ -42,7 +45,7 @@
 // ── Timing ────────────────────────────────────────────────────────────
 #define TT_UPDATE_MS         16
 
-enum TennisState { TT_SERVING, TT_HITTING, TT_RALLY, TT_BALL_DEAD };
+enum TennisState { TT_SERVING, TT_HITTING, TT_RALLY, TT_BALL_DEAD, TT_GAME_OVER };
 
 class TiraTenis : public GameBase {
 public:
@@ -108,12 +111,22 @@ private:
   unsigned long hitAnimStepTime;
   bool          hitAnimActive;     // animación de miss corriendo durante TT_RALLY
 
+  int           score[2];
+  int           winner;
+  int           goPhase;
+  unsigned long goTimer;
+  int           goFillStep;
+  int           goEraseArr[144];
+  int           goEraseCount;
+
   bool          introActive;
   int           introPhase;        // 0=approach, 1=walkin
   unsigned long introStart;
   unsigned long introPhaseStart;
 
   void  updateIntro();
+  void  updateGameOver();
+  void  renderScoreLeds();
   void  updateServe();
   void  updateHitting();
   void  updateRally();

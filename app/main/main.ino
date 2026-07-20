@@ -10,6 +10,7 @@
 #include "TiraTenis.h"
 #include "TiraZombies.h"
 #include "TiraGestures.h"
+#include "TiraHero.h"
 
 #define LED_PIN     25
 #define NUM_LEDS    144
@@ -51,7 +52,7 @@ bool displayOK = false;
 
 const char* gameNames[GAME_COUNT] = {
   "TiraMatch", "TiraTenis", "TiraZombies",
-  "TiraGestures", "TiraPong", "TiraSnake",
+  "TiraGestures", "TiraHero", "TiraSnake",
   "TiraBlocks", "TiraBreak", "TiraBattle",
   "TiraArcade"
 };
@@ -81,7 +82,7 @@ void switchGame(int idx) {
   currentGameIdx = idx;
 
   // Juegos demo (sin implementación): mostrar "Coming soon" y volver al menú
-  if (idx > 3) {
+  if (idx > 4) {
     if (displayOK) {
       display.clearBuffer();
       display.setFont(u8g2_font_7x14B_tr);
@@ -100,6 +101,7 @@ void switchGame(int idx) {
     case 1: currentGame = new TiraTenis(leds, NUM_LEDS, &display);    break;
     case 2: currentGame = new TiraZombies(leds, NUM_LEDS, &display);  break;
     case 3: currentGame = new TiraGestures(leds, NUM_LEDS, &display); break;
+    case 4: currentGame = new TiraHero(leds, NUM_LEDS, &display);    break;
   }
   if (displayOK) {
     display.clearBuffer();

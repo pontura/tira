@@ -413,8 +413,8 @@ void TiraMatch::renderFrame() {
   for (int i = 0; i < numLeds; i++) leds[i] = spawnBuffer[i];
 
   int  center = spawnCenter;
-  CRGB dimP1  = COLORS[p1ColorIdx]; dimP1.nscale8(25);
-  CRGB dimP2  = COLORS[p2ColorIdx]; dimP2.nscale8(25);
+  CRGB dimP1  = COLORS[p1ColorIdx]; dimP1.nscale8(5);
+  CRGB dimP2  = COLORS[p2ColorIdx]; dimP2.nscale8(5);
 
   for (int i = 0; i < center - 1; i++)
     if (leds[i] == CRGB::Black) leds[i] = dimP1;
