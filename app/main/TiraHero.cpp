@@ -143,9 +143,6 @@ void TiraHero::spawnNote(int ni) {
   int colorIdx = (ni / 2) % 2;  // 0,0,1,1,0,0... → cada player alterna A/B/A/B
   CRGB col = (n.freq == 0) ? CRGB::Black : (colorIdx == 0 ? colA : colB);
 
-  int pForNote = (dir == +1) ? 0 : 1;
-  if (playerOut[pForNote]) return;
-
   int sl = findFreeBlock();
   if (sl < 0) return;
   TH_Block& b = blocks[sl];
@@ -176,10 +173,6 @@ void TiraHero::addPenalty(int p) {
   penaltyCount[p]++;
   if (penaltyCount[p] >= 3) {
     playerOut[p] = true;
-    for (int i = 0; i < TH_MAX_BLOCKS; i++) {
-      int bp = (blocks[i].dir == +1) ? 0 : 1;
-      if (blocks[i].active && bp == p) blocks[i].active = false;
-    }
     killPlayerSparks(sparks, p);
     if (playerOut[0] && playerOut[1]) {
       gameOver = true;
@@ -358,6 +351,14 @@ void TiraHero::renderFrame() {
   }
   clearLeds();
 
+  // Player eliminado: fondo rojo desde el extremo hasta su base (no hasta el centro),
+  // debajo de las notas, que van a seguir pasando "apagadas" por encima
+  for (int p = 0; p < 2; p++) {
+    if (!playerOut[p]) continue;
+    if (p == 0) for (int j = 0; j <= numLeds / 2 - TH_BASE_OFFSET; j++)         setLed(j, CRGB::Red);
+    else        for (int j = numLeds / 2 + TH_BASE_OFFSET; j < numLeds; j++)    setLed(j, CRGB::Red);
+  }
+
   // Bloques (silencios no se pintan)
   for (int i = 0; i < TH_MAX_BLOCKS; i++) {
     TH_Block& b = blocks[i];
@@ -371,6 +372,14 @@ void TiraHero::renderFrame() {
     int p2base = numLeds / 2 + TH_BASE_OFFSET;  // LED 87
     int clipL = (b.dir == +1) ? max(left, 0)           : max(left, p2base + 1);
     int clipR = (b.dir == +1) ? min(right, p1base - 1) : min(right, numLeds - 1);
+
+    int bp = (b.dir == +1) ? 0 : 1;
+    if (playerOut[bp]) {
+      // Player eliminado: la nota sigue su recorrido pero apagada (negra) sobre el fondo rojo
+      for (int j = clipL; j <= clipR; j++) setLed(j, CRGB::Black);
+      continue;
+    }
+
     bool isGoodHit = (goodHold[0] && activeHitBlock[0] == i) ||
                      (goodHold[1] && activeHitBlock[1] == i);
     CRGB baseColor = b.missed    ? CRGB::Red
@@ -420,13 +429,6 @@ void TiraHero::renderFrame() {
   };
   if (!playerOut[0]) setLed(numLeds / 2 - TH_BASE_OFFSET, getBaseColor(0));
   if (!playerOut[1]) setLed(numLeds / 2 + TH_BASE_OFFSET, getBaseColor(1));
-
-  // Player eliminado: toda su mitad en rojo (encima de todo)
-  for (int p = 0; p < 2; p++) {
-    if (!playerOut[p]) continue;
-    if (p == 0) for (int j = 0; j < numLeds / 2; j++)       setLed(j, CRGB::Red);
-    else        for (int j = numLeds / 2 + 1; j < numLeds; j++) setLed(j, CRGB::Red);
-  }
 
   showLeds();
 }
