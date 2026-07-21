@@ -1,14 +1,8 @@
 #include "TiraHero.h"
 
-static const int SONG_COUNT = 2;
+static const int SONG_COUNT = 1;
 static const char* SONGS[SONG_COUNT] = {
-  "Final Countdown:o=5,d=16,b=125:"
-  "b,a,4b,4e,4p,8p,c6,b,8c6,8b,4a,4p,8p,c6,b,4c6,4e,4p,8p,"
-  "a,g,8a,8g,8f#,8a,4g.,f#,g,4a.,g,a,8b,8a,8g,8f#,4e,4c6,2b.,"
-  "b,c6,b,a,1b",
-  "YMCA:o=5,d=8,b=160:"
-  "c#6,a#,2p,a#,g#,f#,g#,a#,4c#6,a#,4c#6,d#6,a#,2p,a#,g#,f#,g#,a#,4c#6,a#,4c#6,"
-  "d#6,b,2p,b,a#,g#,a#,b,4d#6,f#6,4d#6,4f6.,4d#6.,4c#6.,4b.,4a#,4g#"
+  "Jackson:d=4,o=5,b=125:8b,8e6,8g#6,8a6,8g#6,8e6,8b,8a,8g#,8a,b.,p,16b,16b,8e6,8g#6,8a6,8g#6,8e6,8b,8a,8g#,8a,b.,8p,16b,16b,8c#6,16c#6,8e6,16e6,8f#.6,16e6,8e6,8p,16e6,16e6,8c#6,8c#6,8e6,8e6,8f#6,8e6,8f#6,g#.6,1p,b,b,8b,16f#6,16f#6,16f#6,8f#.6,8g#6,8f#6,8e6,8e6,8e6,8c#6,8e6,8e6,8c#6,8f#6,e6,e.6,1p"
 };
 
 // Frecuencias base octava 4: C C# D D# E F F# G G# A A# B
@@ -62,7 +56,7 @@ void TiraHero::parseRTTTL(const char* s) {
   speed     = TH_LEDS_PER_EIGHTH / msEighth;
   quarterMs = msWhole / 4.0f;
   // LEDs que recorre el leading edge de un bloque derecho: centro(72)→base(143) = 71
-  travelMs  = (uint32_t)((float)(numLeds / 2 - 1) / speed);
+  travelMs  = (uint32_t)((float)(numLeds / 2 - TH_BASE_OFFSET) / speed);
 
   uint32_t songMs = 0;
 
@@ -108,6 +102,7 @@ void TiraHero::parseRTTTL(const char* s) {
 // ── Inicialización ────────────────────────────────────────────────────
 void TiraHero::begin() {
   for (int i = 0; i < TH_MAX_BLOCKS; i++) blocks[i].active = false;
+  for (int i = 0; i < TH_MAX_SPARKS;  i++) sparks[i].flags = 0;
   songIdx = 0;
   parseRTTTL(SONGS[songIdx]);
   nextNote    = 0;
@@ -117,10 +112,15 @@ void TiraHero::begin() {
   lastMelodyFreq = 0;
   lastBeatNum    = -1;
   for (int p = 0; p < 2; p++) {
+    buttonHeld[p]     = false;
     badHold[p]        = false;
     goodHold[p]       = false;
     activeHitBlock[p] = -1;
+    penaltyCount[p]   = 0;
+    playerOut[p]      = false;
   }
+  gameOver = false;
+  endMs    = 0;
   clearLeds();
   showLeds();
 }
@@ -135,13 +135,16 @@ int TiraHero::findFreeBlock() {
 void TiraHero::spawnNote(int ni) {
   TH_Note& n   = notes[ni];
   int center = numLeds / 2;
-  int dir    = (ni % 2 == 0) ? +1 : -1;   // par → P2 (derecha), impar → P1 (izquierda)
+  int dir    = (ni % 2 == 0) ? -1 : +1;   // par → P2 (desde extremo derecho), impar → P1 (desde extremo izquierdo)
 
   // Amarillo y violeta alternados por nota dentro de cada player
   static const CRGB colA = CRGB(255, 180, 0);  // amarillo
   static const CRGB colB = CRGB(140, 0, 255);  // violeta
   int colorIdx = (ni / 2) % 2;  // 0,0,1,1,0,0... → cada player alterna A/B/A/B
   CRGB col = (n.freq == 0) ? CRGB::Black : (colorIdx == 0 ? colA : colB);
+
+  int pForNote = (dir == +1) ? 0 : 1;
+  if (playerOut[pForNote]) return;
 
   int sl = findFreeBlock();
   if (sl < 0) return;
@@ -153,21 +156,51 @@ void TiraHero::spawnNote(int ni) {
   b.durMs    = n.durMs;
   b.active   = true;
   b.fired    = false;
-  b.visible  = (n.size >= TH_LEDS_PER_EIGHTH);  // corcheas y más largas
+  b.visible  = (n.size >= 2);  // semicorcheas y más largas
   b.missed   = false;
+  b.hit      = false;
 
   if (dir == +1)
-    b.leftEdge = (float)(center - n.size + 1);    // leading edge (borde der) arranca en centro
+    b.leftEdge = -(float)(n.size - 1);  // P1: leading edge entra desde LED 0 (extremo izquierdo)
   else
-    b.leftEdge = (float)center;                   // leading edge (borde izq) arranca en centro
+    b.leftEdge = (float)numLeds;        // P2: leading edge entra desde LED 143 (extremo derecho)
+}
+
+static void killPlayerSparks(TH_Spark* sparks, int p) {
+  for (int i = 0; i < TH_MAX_SPARKS; i++)
+    if ((sparks[i].flags & 1) && sparks[i].player == (uint8_t)p) sparks[i].flags &= ~1u;
+}
+
+void TiraHero::addPenalty(int p) {
+  if (playerOut[p]) return;
+  penaltyCount[p]++;
+  if (penaltyCount[p] >= 3) {
+    playerOut[p] = true;
+    for (int i = 0; i < TH_MAX_BLOCKS; i++) {
+      int bp = (blocks[i].dir == +1) ? 0 : 1;
+      if (blocks[i].active && bp == p) blocks[i].active = false;
+    }
+    killPlayerSparks(sparks, p);
+    if (playerOut[0] && playerOut[1]) {
+      gameOver = true;
+      endMs    = millis() + 2000;
+    }
+  }
 }
 
 // ── Update ────────────────────────────────────────────────────────────
 void TiraHero::update() {
+  if (gameOver) {
+    if (millis() >= endMs) begin();
+    else renderFrame();
+    return;
+  }
+
   unsigned long now = millis();
   if (now - lastUpdate < TH_UPDATE_MS) return;
 
   float dt   = (float)(now - lastUpdate);
+  if (dt > 50.0f) dt = 50.0f;  // cap: evita saltos enormes si el loop se bloqueó
   lastUpdate = now;
   float move = speed * dt;
 
@@ -185,12 +218,12 @@ void TiraHero::update() {
 
     if (!b.fired) {
       bool hit = (b.dir == +1)
-        ? (b.leftEdge + b.size - 1 >= (float)(numLeds - TH_BASE_SIZE))
-        : (b.leftEdge <= (float)(TH_BASE_SIZE - 1));
+        ? (b.leftEdge + b.size - 1 >= (float)(numLeds / 2 - TH_BASE_OFFSET))  // P1 base en LED 71
+        : (b.leftEdge <= (float)(numLeds / 2 + TH_BASE_OFFSET));               // P2 base en LED 73
       if (hit) {
         b.fired = true;
         // La nota siempre suena al llegar: el jugador tiene hasta offset LEDs para presionar
-        if (b.freq > 0 && !badHold[0] && !badHold[1]) {
+        if (b.freq > 0) {
           tone(BUZZER_PIN, b.freq, b.durMs);
           melodyEndMs    = now + b.durMs;
           lastMelodyFreq = b.freq;
@@ -201,22 +234,23 @@ void TiraHero::update() {
     // Detectar miss: leading edge pasó base+offset sin que el player presionara
     // (fuera del if (!b.fired) para evaluarse en todos los frames post-fire)
     if (b.fired && b.visible && !b.missed && b.freq > 0) {
-      int p = (b.dir == +1) ? 1 : 0;
-      bool wasHit = (goodHold[p] && activeHitBlock[p] == i);
-      if (!wasHit) {
+      int p = (b.dir == +1) ? 0 : 1;   // dir+1=P1=p0, dir-1=P2=p1
+      if (!b.hit) {
         float leadEdge = (b.dir == +1) ? (b.leftEdge + b.size - 1) : b.leftEdge;
-        float baseF    = (b.dir == +1) ? (float)(numLeds - 1) : 0.0f;
+        float baseF    = (b.dir == +1) ? (float)(numLeds / 2 - TH_BASE_OFFSET) : (float)(numLeds / 2 + TH_BASE_OFFSET);
         float pastBase = (b.dir == +1) ? (leadEdge - baseF) : (baseF - leadEdge);
         if (pastBase > (float)TH_HIT_OFFSET) {
           b.missed = true;
-          if (!badHold[0] && !badHold[1])
-            tone(BUZZER_PIN, punishFreq(), 200);
+          addPenalty(p);
         }
       }
     }
 
-    // Desactivar cuando sale completamente de la tira
-    if (b.leftEdge + b.size <= 0.0f || b.leftEdge >= (float)numLeds)
+    // Desactivar al pasar la base o al salir de la tira
+    bool pastBase = (b.dir == +1)
+      ? (b.leftEdge > (float)(numLeds / 2 - TH_BASE_OFFSET + 2 * TH_HIT_OFFSET))
+      : (b.leftEdge + b.size - 1 < (float)(numLeds / 2 + TH_BASE_OFFSET - 2 * TH_HIT_OFFSET));
+    if (pastBase || b.leftEdge + b.size <= 0.0f || b.leftEdge >= (float)numLeds)
       b.active = false;
   }
 
@@ -224,16 +258,35 @@ void TiraHero::update() {
   int beatNum = (int)((float)(now - songStartMs) / quarterMs);
   if (beatNum > lastBeatNum) {
     lastBeatNum = beatNum;
-    if (now >= melodyEndMs && !badHold[0] && !badHold[1])
+    if (now >= melodyEndMs)
       tone(BUZZER_PIN, 65, 70);
   }
 
-  // Detectar bloque held que salió del strip (sostenido demasiado tiempo)
+  // Expirar goodHold cuando el bloque termina o el trailing edge pasó 8 LEDs la base
+  // Solo penalizar (badHold) si el botón sigue apretado Y el hold fue demasiado prolongado;
+  // si el bloque se desactivó naturalmente es fin correcto de nota → sin castigo
   for (int p = 0; p < 2; p++) {
-    if (goodHold[p] && activeHitBlock[p] >= 0 && !blocks[activeHitBlock[p]].active) {
-      tone(BUZZER_PIN, punishFreq(), 250);
+    if (!goodHold[p] || activeHitBlock[p] < 0 || activeHitBlock[p] >= TH_MAX_BLOCKS) continue;
+    TH_Block& b = blocks[activeHitBlock[p]];
+    bool expired  = false;
+    bool lateHold = false;
+    if (!b.active) {
+      expired = true;  // bloque terminó su recorrido → fin de nota, sin castigo
+    } else {
+      float trailEdge = (b.dir == +1) ? b.leftEdge : (b.leftEdge + b.size - 1);
+      float baseF     = (b.dir == +1) ? (float)(numLeds / 2 - TH_BASE_OFFSET)
+                                      : (float)(numLeds / 2 + TH_BASE_OFFSET);
+      float pastTrail = (b.dir == +1) ? (trailEdge - baseF) : (baseF - trailEdge);
+      if (pastTrail > 8.0f) { expired = true; lateHold = true; }
+    }
+    if (expired) {
       goodHold[p]       = false;
       activeHitBlock[p] = -1;
+      if (lateHold && buttonHeld[p]) {  // hold prolongado mientras bloque activo → rojo
+        killPlayerSparks(sparks, p);
+        badHold[p] = true;
+        addPenalty(p);
+      }
     }
   }
 
@@ -251,16 +304,59 @@ void TiraHero::update() {
     }
   }
 
+  // Chispas: spawn en la base mientras haya nota en la ventana
+  for (int p = 0; p < 2; p++) {
+    int   dir   = (p == 0) ? +1 : -1;
+    float baseF = (p == 0) ? (float)(numLeds / 2 - TH_BASE_OFFSET)
+                           : (float)(numLeds / 2 + TH_BASE_OFFSET);
+    bool noteHere = false;
+    for (int i = 0; i < TH_MAX_BLOCKS && !noteHere; i++) {
+      TH_Block& b = blocks[i];
+      if (!b.active || b.dir != dir || !b.fired || b.freq == 0 || !b.visible) continue;
+      float leadEdge = (dir == +1) ? (b.leftEdge + b.size - 1) : b.leftEdge;
+      float pastBase = (dir == +1) ? (leadEdge - baseF) : (baseF - leadEdge);
+      if (pastBase > -(float)TH_HIT_OFFSET && pastBase < (float)(TH_HIT_OFFSET * 3))
+        noteHere = true;
+    }
+    if (noteHere && (goodHold[p] || badHold[p])) {
+      int sdir = (p == 0) ? +1 : -1;
+      for (int i = 0; i < TH_MAX_SPARKS; i++) {
+        if (!(sparks[i].flags & 1)) {
+          float   vel  = speed * (1.5f + (float)random(0, 36) / 10.0f);
+          uint8_t dist = (uint8_t)(4 + random(0, TH_BASE_OFFSET - 3));
+          sparks[i] = { baseF, vel, dist, (int8_t)sdir, (uint8_t)p,
+                        (uint8_t)(1u | (goodHold[p] ? 2u : 0u)) };
+          break;
+        }
+      }
+    }
+  }
+
+  float center = (float)(numLeds / 2);
+  for (int i = 0; i < TH_MAX_SPARKS; i++) {
+    TH_Spark& s = sparks[i];
+    if (!(s.flags & 1)) continue;
+    s.pos += (float)s.dir * s.vel * dt;
+    float startPos = (s.player == 0) ? (float)(numLeds / 2 - TH_BASE_OFFSET)
+                                     : (float)(numLeds / 2 + TH_BASE_OFFSET);
+    float traveled = (s.dir == +1) ? (s.pos - startPos) : (startPos - s.pos);
+    if (traveled >= (float)s.maxDist ||
+        (s.dir == +1 && s.pos >= center) ||
+        (s.dir == -1 && s.pos <= center))
+      s.flags &= ~1u;
+  }
+
   renderFrame();
 }
 
 // ── Render ────────────────────────────────────────────────────────────
 void TiraHero::renderFrame() {
+  if (gameOver) {
+    fill_solid(leds, numLeds, CRGB::Red);
+    showLeds();
+    return;
+  }
   clearLeds();
-
-  // Bases de player: blanco normal, rojo si hay castigo activo
-  setLed(0,           badHold[0] ? CRGB::Red : CRGB::White);
-  setLed(numLeds - 1, badHold[1] ? CRGB::Red : CRGB::White);
 
   // Bloques (silencios no se pintan)
   for (int i = 0; i < TH_MAX_BLOCKS; i++) {
@@ -271,8 +367,10 @@ void TiraHero::renderFrame() {
     int leadEdge = (b.dir == +1) ? right : left;
     int center   = numLeds / 2;
     // Clipear cada bloque a su mitad del strip
-    int clipL = (b.dir == +1) ? max(left, center)     : max(left, 0);
-    int clipR = (b.dir == +1) ? min(right, numLeds-1) : min(right, center - 1);
+    int p1base = numLeds / 2 - TH_BASE_OFFSET;  // LED 57
+    int p2base = numLeds / 2 + TH_BASE_OFFSET;  // LED 87
+    int clipL = (b.dir == +1) ? max(left, 0)           : max(left, p2base + 1);
+    int clipR = (b.dir == +1) ? min(right, p1base - 1) : min(right, numLeds - 1);
     bool isGoodHit = (goodHold[0] && activeHitBlock[0] == i) ||
                      (goodHold[1] && activeHitBlock[1] == i);
     CRGB baseColor = b.missed    ? CRGB::Red
@@ -289,28 +387,58 @@ void TiraHero::renderFrame() {
     }
   }
 
-  // Centro siempre blanco (punto de spawn)
-  setLed(numLeds / 2, CRGB::White);
+  for (int i = 0; i < TH_MAX_SPARKS; i++) {
+    TH_Spark& s = sparks[i];
+    if (!(s.flags & 1)) continue;
+    int pos = (int)s.pos;
+    if (pos < 0 || pos >= numLeds) continue;
+    float startPos = (s.player == 0) ? (float)(numLeds / 2 - TH_BASE_OFFSET)
+                                     : (float)(numLeds / 2 + TH_BASE_OFFSET);
+    float traveled = (s.dir == +1) ? (s.pos - startPos) : (startPos - s.pos);
+    float ratio    = 1.0f - traveled / (float)s.maxDist;
+    uint8_t bright = (uint8_t)(255.0f * (ratio < 0.0f ? 0.0f : ratio));
+    CRGB col = (s.flags & 2) ? CRGB::Green : CRGB::Red;
+    col.nscale8(bright);
+    setLed(pos, col);
+  }
+
+  // Indicadores de penalización: desde el centro hacia cada player
+  int ctr = numLeds / 2;
+  for (int p = 0; p < 2; p++) {
+    int cnt = penaltyCount[p] < 3 ? penaltyCount[p] : 3;
+    for (int e = 0; e < cnt; e++) {
+      int led = (p == 0) ? (ctr - 1 - e) : (ctr + 1 + e);
+      setLed(led, CRGB::Red);
+    }
+  }
+
+  // Bases siempre encima de los bloques: verde=bien, rojo=error, blanco=idle
+  auto getBaseColor = [&](int p) -> CRGB {
+    if (badHold[p])  return CRGB::Red;
+    if (goodHold[p]) return CRGB::Green;
+    return CRGB::White;
+  };
+  if (!playerOut[0]) setLed(numLeds / 2 - TH_BASE_OFFSET, getBaseColor(0));
+  if (!playerOut[1]) setLed(numLeds / 2 + TH_BASE_OFFSET, getBaseColor(1));
+
+  // Player eliminado: toda su mitad en rojo (encima de todo)
+  for (int p = 0; p < 2; p++) {
+    if (!playerOut[p]) continue;
+    if (p == 0) for (int j = 0; j < numLeds / 2; j++)       setLed(j, CRGB::Red);
+    else        for (int j = numLeds / 2 + 1; j < numLeds; j++) setLed(j, CRGB::Red);
+  }
 
   showLeds();
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────
-uint16_t TiraHero::punishFreq() {
-  if (millis() < melodyEndMs && lastMelodyFreq > 0) {
-    uint16_t f = lastMelodyFreq;
-    while (f > 65) f >>= 1;           // bajar octavas hasta acercarse a 55 Hz
-    return (f < 20) ? 20 : f;
-  }
-  return TH_PUNISH_FREQ;
 }
 
 // ── Input ─────────────────────────────────────────────────────────────
 void TiraHero::onInput(int player, int button) {
   if (player < 1 || player > 2) return;
   int p    = player - 1;
-  int dir  = (player == 2) ? +1 : -1;
-  float base = (player == 2) ? (float)(numLeds - 1) : 0.0f;
+  if (playerOut[p] || gameOver) return;
+  buttonHeld[p] = true;
+  int dir  = (player == 1) ? +1 : -1;
+  float base = (player == 1) ? (float)(numLeds / 2 - TH_BASE_OFFSET) : (float)(numLeds / 2 + TH_BASE_OFFSET);
 
   // Buscar nota cuyo leading edge esté dentro del offset de la base
   for (int i = 0; i < TH_MAX_BLOCKS; i++) {
@@ -318,37 +446,29 @@ void TiraHero::onInput(int player, int button) {
     if (!b.active || b.dir != dir) continue;
     float leadEdge = (dir == +1) ? (b.leftEdge + b.size - 1) : b.leftEdge;
     if (fabsf(leadEdge - base) <= (float)TH_HIT_OFFSET) {
+      killPlayerSparks(sparks, p);
       goodHold[p]       = true;
       badHold[p]        = false;
       activeHitBlock[p] = i;
+      b.hit             = true;
       return;
     }
   }
-  // No había nota → castigo
+  // No había nota → solo rojo en base
+  killPlayerSparks(sparks, p);
   badHold[p]        = true;
   goodHold[p]       = false;
   activeHitBlock[p] = -1;
-  tone(BUZZER_PIN, punishFreq());   // sin duración: suena hasta noTone()
 }
 
 void TiraHero::onButtonUp(int player, int button) {
   if (player < 1 || player > 2) return;
   int p = player - 1;
-
-  if (badHold[p]) {
-    noTone(BUZZER_PIN);
-    badHold[p] = false;
-    return;
-  }
+  if (playerOut[p] || gameOver) return;
+  buttonHeld[p] = false;
+  badHold[p]    = false;
 
   if (goodHold[p] && activeHitBlock[p] >= 0) {
-    TH_Block& b = blocks[activeHitBlock[p]];
-    if (b.active) {
-      float base       = (player == 2) ? (float)(numLeds - 1) : 0.0f;
-      float trailEdge  = (b.dir == +1) ? b.leftEdge : (b.leftEdge + b.size - 1);
-      if (fabsf(trailEdge - base) > (float)TH_HIT_OFFSET)
-        tone(BUZZER_PIN, punishFreq(), 250);  // soltó fuera del offset
-    }
     goodHold[p]       = false;
     activeHitBlock[p] = -1;
   }
