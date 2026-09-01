@@ -13,7 +13,7 @@
 #define BTN_COLOR    10   // GPIO10 — botón cambiar color
 #define BUZZER_PIN   7    // GPIO7 — buzzer pasivo
 
-uint8_t masterMAC[] = { 0x70, 0x4B, 0xCA, 0x21, 0xEA, 0x18 };
+uint8_t masterMAC[] = { 0xE0, 0x8C, 0xFE, 0x5C, 0x42, 0x94 };
 
 // ── Estructuras de paquetes (deben coincidir con main.ino) ───────────
 struct JoyInputPacket {
@@ -30,6 +30,7 @@ struct JoyAnalogPacket {
   uint8_t playerId;
   int16_t tiltX;
   int16_t tiltY;
+  int16_t tiltZ;
 };
 
 // ── MPU-6050 ─────────────────────────────────────────────────────────
@@ -51,11 +52,12 @@ void sendAnalog() {
   Wire.beginTransmission(MPU_ADDR);
   Wire.write(0x3B);  // ACCEL_XOUT_H
   Wire.endTransmission(false);
-  Wire.requestFrom(MPU_ADDR, 4, true);
+  Wire.requestFrom(MPU_ADDR, 6, true);
   int16_t ax = (int16_t)((Wire.read() << 8) | Wire.read());
   int16_t ay = (int16_t)((Wire.read() << 8) | Wire.read());
+  int16_t az = (int16_t)((Wire.read() << 8) | Wire.read());
 
-  JoyAnalogPacket pkt = { PLAYER_ID, ax, ay };
+  JoyAnalogPacket pkt = { PLAYER_ID, ax, ay, az };
   esp_now_send(masterMAC, (uint8_t*)&pkt, sizeof(pkt));
 }
 

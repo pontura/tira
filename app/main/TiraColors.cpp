@@ -1,21 +1,22 @@
-#include "TiraMatch.h"
+#include "TiraColors.h"
+#include <NonBlockingRtttl.h>  // rtttl::tone/noTone: mismo canal LEDC que usa SoundManager
 
-const CRGB TiraMatch::COLORS[6] = {
+const CRGB TiraColors::COLORS[6] = {
   CRGB::Red, CRGB::Green, CRGB::Blue,
   CRGB::Yellow, CRGB::Cyan, CRGB::Magenta
 };
 
-TiraMatch::TiraMatch(CRGB* leds, int numLeds, U8G2* display)
+TiraColors::TiraColors(CRGB* leds, int numLeds, U8G2* display)
   : GameBase(leds, numLeds, display) {
   spawnBuffer = new CRGB[numLeds]();
 }
 
-TiraMatch::~TiraMatch() {
+TiraColors::~TiraColors() {
   delete[] spawnBuffer;
 }
 
-void TiraMatch::begin() {
-  Serial.println("[TM] begin");
+void TiraColors::begin() {
+  buzzerOffAt = 0;
   for (int i = 0; i < MAX_SHOTS; i++) shots[i].active = false;
   fill_solid(spawnBuffer, numLeds, CRGB::Black);
 
@@ -59,20 +60,23 @@ void TiraMatch::begin() {
   introStart     = now;
   lastIntroSound = now;
 
-  Serial.println("[TM] clearLeds...");
+  prevTilt[0]    = prevTilt[1]    = 0;
+  firstAnalog[0] = firstAnalog[1] = true;
+  lastFire[0]    = lastFire[1]    = 0;
+
   clearLeds();
-  Serial.println("[TM] updateDisplay...");
   updateDisplay();
-  Serial.println("[TM] begin done");
 }
 
-void TiraMatch::update() {
-  static bool firstUpdate = true;
-  if (firstUpdate) { firstUpdate = false; Serial.println("[TM] first update"); }
+void TiraColors::update() {
+  unsigned long now = millis();
+  // Corta el tono actual manualmente en vez de usar tone(pin,freq,dur), y con
+  // rtttl::noTone (no el global) para no pelearse con el canal LEDC que ya
+  // reclamó la librería RTTTL — ver NonBlockingRtttl.h.
+  if (buzzerOffAt && now >= buzzerOffAt) { rtttl::noTone(BUZZER_PIN); buzzerOffAt = 0; }
+
   if (introActive) { updateIntro(); return; }
   if (gameOver)   { updateGameOver(); return; }
-
-  unsigned long now = millis();
 
   if (activeColors < 6 && now - lastColorAdd >= 20000) {
     activeColors++;
@@ -116,16 +120,34 @@ void TiraMatch::update() {
   renderFrame();
 }
 
-void TiraMatch::onInput(int player, int button) {
+// Cualquiera de los 2 botones cambia de color (el disparo se hace por gesto, ver onAnalog)
+void TiraColors::onInput(int player, int button) {
   if (introActive || gameOver) return;
-  if (button == 0) {
-    fire(player);
-  } else {
-    colorChange(player, +1);
+  if (button == 0) colorChange(player, +1);
+  else             colorChange(player, -1);
+}
+
+// Disparo: sacudida brusca de muñeca en tiltY (delta alto entre frames de 32 ms)
+void TiraColors::onAnalog(int player, int16_t /*tiltX*/, int16_t tiltY, int16_t /*tiltZ*/) {
+  if (player < 1 || player > 2) return;
+  if (introActive || gameOver) return;
+  int p = player - 1;
+
+  if (firstAnalog[p]) {
+    prevTilt[p]    = tiltY;
+    firstAnalog[p] = false;
+    return;
+  }
+  int delta   = (int)tiltY - (int)prevTilt[p];
+  prevTilt[p] = tiltY;
+  if (abs(delta) > TC_FIRE_THRESHOLD &&
+      millis() - lastFire[p] > TC_FIRE_COOLDOWN_MS) {
+    lastFire[p] = millis();
+    fire(player);  // auto-cicla el color al disparar
   }
 }
 
-void TiraMatch::fire(int player) {
+void TiraColors::fire(int player) {
   int slot = findFreeSlot();
   if (slot < 0) return;
   sendJoystickSoundToPlayer(player, SND_SHOOT);
@@ -149,7 +171,7 @@ void TiraMatch::fire(int player) {
   updateDisplay();
 }
 
-void TiraMatch::moveShots() {
+void TiraColors::moveShots() {
   for (int i = 0; i < MAX_SHOTS; i++) {
     if (!shots[i].active) continue;
     shots[i].pos += shots[i].dir;
@@ -158,7 +180,7 @@ void TiraMatch::moveShots() {
   }
 }
 
-void TiraMatch::checkCollisions() {
+void TiraColors::checkCollisions() {
   int center     = spawnCenter;
   int leftStart  = center - 2;
   int rightStart = center + 2;
@@ -222,7 +244,7 @@ void TiraMatch::checkCollisions() {
 }
 
 // Encuentra el segmento contiguo, lanza la explosión y lo destruye
-void TiraMatch::explodeAndDestroy(int hitIdx, int minBound, int maxBound, int explosionDir) {
+void TiraColors::explodeAndDestroy(int hitIdx, int minBound, int maxBound, int explosionDir) {
   CRGB hitColor = spawnBuffer[hitIdx];
   int  start = hitIdx, end = hitIdx;
 
@@ -239,7 +261,7 @@ void TiraMatch::explodeAndDestroy(int hitIdx, int minBound, int maxBound, int ex
 }
 
 // Crea una partícula por cada LED del segmento destruido
-void TiraMatch::spawnExplosion(int segStart, int segLen, int dir) {
+void TiraColors::spawnExplosion(int segStart, int segLen, int dir) {
   for (int i = 0; i < segLen; i++) {
     int slot = findFreeParticle();
     if (slot < 0) break;
@@ -253,7 +275,7 @@ void TiraMatch::spawnExplosion(int segStart, int segLen, int dir) {
   }
 }
 
-void TiraMatch::updateParticles() {
+void TiraColors::updateParticles() {
   for (int i = 0; i < MAX_PARTICLES; i++) {
     if (!particles[i].active) continue;
 
@@ -267,7 +289,7 @@ void TiraMatch::updateParticles() {
   }
 }
 
-void TiraMatch::renderParticles() {
+void TiraColors::renderParticles() {
   for (int i = 0; i < MAX_PARTICLES; i++) {
     if (!particles[i].active) continue;
     int idx = (int)particles[i].pos;
@@ -278,20 +300,21 @@ void TiraMatch::renderParticles() {
   }
 }
 
-int TiraMatch::findFreeParticle() {
+int TiraColors::findFreeParticle() {
   for (int i = 0; i < MAX_PARTICLES; i++)
     if (!particles[i].active) return i;
   return -1;
 }
 
 // Spawn alternado: un lado por llamada (L, R, L, R…)
-void TiraMatch::spawnNextLed() {
+void TiraColors::spawnNextLed() {
   int center     = spawnCenter;
   int leftStart  = center - 2;
   int rightStart = center + 2;
 
   if (spawnTurn == 0) {
-    tone(BUZZER_PIN, 80, 25);   // click por cada LED de P1
+    rtttl::tone(BUZZER_PIN, 80);   // click por cada LED de P1
+    buzzerOffAt = millis() + 25;
 
     for (int i = 0; i < leftStart; i++)
       spawnBuffer[i] = spawnBuffer[i + 1];
@@ -324,9 +347,9 @@ void TiraMatch::spawnNextLed() {
 }
 
 // Penalidad: escribe 8 LEDs directamente en el extremo más cercano al jugador del lado impactado
-void TiraMatch::addPenalty(int player, CRGB color) {
+void TiraColors::addPenalty(int player, CRGB color) {
   spawnAccel = constrain(spawnAccel - SPAWN_ACCEL_MATCH, 0.0f, MAX_SPAWN_ACCEL);
-  sendJoystickSoundToPlayer(player, SND_MISS);
+  sendJoystickSoundToPlayer(player, SND_ERROR);
   int center     = spawnCenter;
   int leftStart  = center - 2;
   int rightStart = center + 2;
@@ -356,14 +379,14 @@ void TiraMatch::addPenalty(int player, CRGB color) {
   }
 }
 
-void TiraMatch::startShift(int dir, int steps) {
+void TiraColors::startShift(int dir, int steps) {
   shiftRemaining = steps;
   shiftDir       = dir;
   lastShift      = millis();
 }
 
 // Desplaza el buffer completo 1 LED y mueve el centro con él
-void TiraMatch::stepShift() {
+void TiraColors::stepShift() {
   if (shiftDir == 1) {
     for (int i = numLeds - 1; i > 0; i--)
       spawnBuffer[i] = spawnBuffer[i - 1];
@@ -378,21 +401,21 @@ void TiraMatch::stepShift() {
   shiftRemaining--;
 }
 
-void TiraMatch::erodeLeft() {
+void TiraColors::erodeLeft() {
   int leftStart = spawnCenter - 2;
   for (int i = 0; i <= leftStart; i++) {
     if (spawnBuffer[i] != CRGB::Black) { spawnBuffer[i] = CRGB::Black; return; }
   }
 }
 
-void TiraMatch::erodeRight() {
+void TiraColors::erodeRight() {
   int rightStart = spawnCenter + 2;
   for (int i = numLeds - 1; i >= rightStart; i--) {
     if (spawnBuffer[i] != CRGB::Black) { spawnBuffer[i] = CRGB::Black; return; }
   }
 }
 
-bool TiraMatch::checkGameOver() {
+bool TiraColors::checkGameOver() {
   if (spawnBuffer[0] != CRGB::Black)           loser = 1;
   else if (spawnBuffer[numLeds-1] != CRGB::Black) loser = 2;
   else return false;
@@ -405,11 +428,12 @@ bool TiraMatch::checkGameOver() {
   goBlinkCount = 0;
   goBlinkOn    = true;
   goTimer      = millis();
-  tone(BUZZER_PIN, 440, 200);
+  rtttl::tone(BUZZER_PIN, 440);
+  buzzerOffAt = millis() + 200;
   return true;
 }
 
-void TiraMatch::renderFrame() {
+void TiraColors::renderFrame() {
   for (int i = 0; i < numLeds; i++) leds[i] = spawnBuffer[i];
 
   int  center = spawnCenter;
@@ -436,16 +460,14 @@ void TiraMatch::renderFrame() {
   FastLED.show();
 }
 
-void TiraMatch::renderSpawner() {
+void TiraColors::renderSpawner() {
   int center       = spawnCenter;
   leds[center - 1] = CRGB::White;
   leds[center]     = CRGB::Black;
   leds[center + 1] = CRGB::White;
 }
 
-void TiraMatch::updateIntro() {
-  static bool firstIntro = true;
-  if (firstIntro) { firstIntro = false; Serial.println("[TM] updateIntro enter"); }
+void TiraColors::updateIntro() {
   unsigned long now     = millis();
   unsigned long elapsed = now - introStart;
 
@@ -460,7 +482,7 @@ void TiraMatch::updateIntro() {
   lastIntroSound = now;
 
   int freq = (int)(4000.0f - progress * (4000.0f - 600.0f));
-  tone(BUZZER_PIN, freq);
+  rtttl::tone(BUZZER_PIN, freq);
 
   fill_solid(leds, numLeds, CRGB::Black);
   leds[leftPos]  = CRGB::White;
@@ -469,7 +491,7 @@ void TiraMatch::updateIntro() {
 
   // Fin del intro: los LEDs se tocan
   if (leftPos >= rightPos || elapsed >= 3000) {
-    noTone(BUZZER_PIN);
+    rtttl::noTone(BUZZER_PIN);
     introActive = false;
     unsigned long t = millis();
     lastSpawn  = t;
@@ -478,7 +500,7 @@ void TiraMatch::updateIntro() {
   }
 }
 
-void TiraMatch::updateGameOver() {
+void TiraColors::updateGameOver() {
   unsigned long now = millis();
 
   if (goPhase == GO_BLINK) {
@@ -487,7 +509,8 @@ void TiraMatch::updateGameOver() {
       goBlinkOn = !goBlinkOn;
       if (goBlinkOn) {
         goBlinkCount++;
-        tone(BUZZER_PIN, 440, 180);
+        rtttl::tone(BUZZER_PIN, 440);
+        buzzerOffAt = now + 180;
         if (goBlinkCount >= 5) {
           goPhase     = GO_SWEEP;
           goSweepStep = 0;
@@ -516,7 +539,8 @@ void TiraMatch::updateGameOver() {
 
       int base = map(goSweepStep, 0, numLeds, 2000, 60);
       int freq = constrain(base + random(-40, 41), 40, 2200);
-      tone(BUZZER_PIN, freq, 16);
+      rtttl::tone(BUZZER_PIN, freq);
+      buzzerOffAt = now + 16;
 
       bool allBlack = true;
       for (int i = 0; i < numLeds; i++) {
@@ -568,7 +592,8 @@ void TiraMatch::updateGameOver() {
       // Frecuencia: centro = más agudo, extremo = más grave
       int dist = abs(chosen - center);
       int freq = map(dist, 0, center, 4000, 80);
-      tone(BUZZER_PIN, freq, 25);
+      rtttl::tone(BUZZER_PIN, freq);
+      buzzerOffAt = now + 25;
 
       FastLED.show();
     }
@@ -619,7 +644,7 @@ void TiraMatch::updateGameOver() {
   }
 }
 
-void TiraMatch::renderBlinkFrame() {
+void TiraColors::renderBlinkFrame() {
   for (int i = 0; i < numLeds; i++) leds[i] = spawnBuffer[i];
   if (!goBlinkOn) {
     int lo = spawnCenter - 2;
@@ -633,7 +658,7 @@ void TiraMatch::renderBlinkFrame() {
   FastLED.show();
 }
 
-void TiraMatch::renderGameOver() {
+void TiraColors::renderGameOver() {
   clearLeds();
   displayClear();
   displayText(0, 14, "GAME OVER", u8g2_font_ncenB10_tr);
@@ -643,41 +668,41 @@ void TiraMatch::renderGameOver() {
   displaySend();
 }
 
-void TiraMatch::updateDisplay() {
+void TiraColors::updateDisplay() {
   const char* names[6] = { "R", "G", "B", "Y", "C", "M" };
   char buf[22];
   sprintf(buf, "P1=%-2s    P2=%-2s", names[p1ColorIdx], names[p2ColorIdx]);
   displayClear();
-  displayText(0, 14, "TiraMatch", u8g2_font_ncenB10_tr);
+  displayTitleBar("TiraColors");
   displayText(0, 35, buf);
   displaySend();
 }
 
-int TiraMatch::findFreeSlot() {
+int TiraColors::findFreeSlot() {
   for (int i = 0; i < MAX_SHOTS; i++)
     if (!shots[i].active) return i;
   return -1;
 }
 
-int TiraMatch::pickOtherColor(int current) {
+int TiraColors::pickOtherColor(int current) {
   int others[6], j = 0;
   for (int i = 0; i < activeColors; i++)
     if (i != current) others[j++] = i;
   return others[random(j)];
 }
 
-int TiraMatch::nextColorInCycle(int current) {
+int TiraColors::nextColorInCycle(int current) {
   return (current + 1) % activeColors;
 }
 
-void TiraMatch::colorChange(int player, int delta) {
+void TiraColors::colorChange(int player, int delta) {
   if (player == 1) p1ColorIdx = (p1ColorIdx + delta + activeColors) % activeColors;
   else             p2ColorIdx = (p2ColorIdx + delta + activeColors) % activeColors;
   sendJoystickSoundToPlayer(player, SND_COLOR);
   updateDisplay();
 }
 
-void TiraMatch::rescaleBuffer(int oldLen, int newLen) {
+void TiraColors::rescaleBuffer(int oldLen, int newLen) {
   if (oldLen <= 0 || newLen <= 0 || oldLen == newLen) return;
 
   int leftStart  = spawnCenter - 2;
@@ -706,7 +731,4 @@ void TiraMatch::rescaleBuffer(int oldLen, int newLen) {
 
   leftLedInSeg  = 0;
   rightLedInSeg = 0;
-}
-
-void TiraMatch::onAnalog(int /*player*/, int16_t /*tiltX*/, int16_t /*tiltY*/) {
 }

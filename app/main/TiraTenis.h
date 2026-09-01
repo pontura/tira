@@ -14,20 +14,20 @@
 #define TT_SERVE_TRAVEL      20
 
 // ── Hit (zona azul) ───────────────────────────────────────────────────
-#define TT_HIT_LEN           13
+#define TT_HIT_LEN           20
 #define TT_HIT_MS            200
 
 // ── Trayectoria de la pelota ───────────────────────────────────────────
 #define TT_BALL_LEDS_MAX     200    // LEDs totales al 100% de potencia (drive)
 #define TT_BALL_LEDS_MIN     25     // LEDs totales al 10% de potencia (drive)
-#define TT_BALL_TIME_MAX_MS  2200   // ms al 100% de potencia (drive)
+#define TT_BALL_TIME_MAX_MS  3200   // ms al 100% de potencia (drive)
 #define TT_BALL_TIME_MIN_MS  1800   // ms al 10% de potencia (drive)
 #define TT_SERVE_LEDS_MAX    200    // LEDs totales al 100% de potencia (saque)
 #define TT_SERVE_LEDS_MIN    80    // LEDs totales al 10% de potencia (saque)
 #define TT_LOB_LEDS_MAX      150    // LEDs totales al 100% de potencia (lob)
 #define TT_LOB_LEDS_MIN      30    // LEDs totales al 10% de potencia (lob)
-#define TT_LOB_TIME_MAX_MS   4000   // ms al 100% de potencia (lob)
-#define TT_LOB_TIME_MIN_MS   2200   // ms al 10% de potencia (lob)
+#define TT_LOB_TIME_MAX_MS   4800   // ms al 100% de potencia (lob)
+#define TT_LOB_TIME_MIN_MS   2500   // ms al 10% de potencia (lob)
 
 // ── Pelota muerta ─────────────────────────────────────────────────────
 #define TT_DEAD_BALL_MS       250    // fase 1: pelota roja moviéndose
@@ -53,7 +53,7 @@ public:
   void begin()                            override;
   void update()                           override;
   void onInput(int player, int button)    override;
-  void onAnalog(int player, int16_t tiltX, int16_t tiltY) override;
+  void onAnalog(int player, int16_t tiltX, int16_t tiltY, int16_t tiltZ) override;
 
 private:
   TennisState   state;

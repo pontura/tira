@@ -12,7 +12,7 @@ public:
   TiraZombies(CRGB* leds, int numLeds, U8G2* display);
   void begin()  override;
   void update() override;
-  void onAnalog(int player, int16_t tiltX, int16_t tiltY) override;
+  void onAnalog(int player, int16_t tiltX, int16_t tiltY, int16_t tiltZ) override;
 
 private:
   float         pos[2];

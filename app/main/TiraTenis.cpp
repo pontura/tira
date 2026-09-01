@@ -1,4 +1,5 @@
 #include "TiraTenis.h"
+#include <NonBlockingRtttl.h>  // rtttl::tone/noTone: mismo canal LEDC que usa SoundManager
 
 TiraTenis::TiraTenis(CRGB* leds, int numLeds, U8G2* display)
   : GameBase(leds, numLeds, display) {}
@@ -149,7 +150,7 @@ void TiraTenis::updateIntro() {
     int leftLed  = (int)(progress * netPos);
     int rightLed = numLeds - 1 - leftLed;
 
-    tone(BUZZER_PIN, (int)(4000.0f - progress * 3400.0f));
+    rtttl::tone(BUZZER_PIN, (int)(4000.0f - progress * 3400.0f));
 
     fill_solid(leds, numLeds, CRGB::Black);
     if (leftLed < rightLed) {
@@ -161,7 +162,7 @@ void TiraTenis::updateIntro() {
     FastLED.show();
 
     if (leftLed >= rightLed || elapsed >= 2200) {
-      noTone(BUZZER_PIN);
+      rtttl::noTone(BUZZER_PIN);
       introPhase      = 1;
       introPhaseStart = now;
       pos[0] = 0.0f;
@@ -437,7 +438,7 @@ void TiraTenis::onInput(int player, int button) {
   }
 }
 
-void TiraTenis::onAnalog(int player, int16_t /*tiltX*/, int16_t tiltY) {
+void TiraTenis::onAnalog(int player, int16_t /*tiltX*/, int16_t tiltY, int16_t /*tiltZ*/) {
   if (introActive) return;
   if (player < 1 || player > 2) return;
   int p = player - 1;

@@ -7,6 +7,11 @@ void (*SoundManager::onPlayerCallback)(uint8_t, const char*) = nullptr;
 
 void SoundManager::begin() {
   pinMode(BUZZER_PIN, OUTPUT);
+  // Reclama el pin vía LEDC una sola vez, al arrancar, antes de que ningún
+  // juego llame a tone()/noTone(). Todo el proyecto debe usar rtttl::tone()/
+  // rtttl::noTone() (no el tone()/noTone() global) para no pelearse por el
+  // mismo canal — ver el comentario en NonBlockingRtttl.h.
+  rtttl::toneSetup(BUZZER_PIN);
 }
 
 void SoundManager::setOnPlayCallback(void (*cb)(const char*)) {
@@ -39,8 +44,7 @@ void SoundManager::update() {
 }
 
 void SoundManager::stop() {
-  rtttl::stop();
-  noTone(BUZZER_PIN);
+  rtttl::stop();  // ya corta el tono internamente (rtttl::noTone)
 }
 
 bool SoundManager::isPlaying() {

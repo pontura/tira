@@ -1,8 +1,20 @@
 #include "TiraHero.h"
+#include <NonBlockingRtttl.h>  // rtttl::tone/noTone: mismo canal LEDC que usa SoundManager
 
-static const int SONG_COUNT = 1;
+// Ordenadas de más lenta a más rápida (según ms por nota por defecto: (240000/bpm)/d).
+static const int SONG_COUNT = 11;
 static const char* SONGS[SONG_COUNT] = {
-  "Jackson:d=4,o=5,b=125:8b,8e6,8g#6,8a6,8g#6,8e6,8b,8a,8g#,8a,b.,p,16b,16b,8e6,8g#6,8a6,8g#6,8e6,8b,8a,8g#,8a,b.,8p,16b,16b,8c#6,16c#6,8e6,16e6,8f#.6,16e6,8e6,8p,16e6,16e6,8c#6,8c#6,8e6,8e6,8f#6,8e6,8f#6,g#.6,1p,b,b,8b,16f#6,16f#6,16f#6,8f#.6,8g#6,8f#6,8e6,8e6,8e6,8c#6,8e6,8e6,8c#6,8f#6,e6,e.6,1p"
+  "Led Zepelin-Stairway to Heaven:o=5,d=8,b=63,b=63:a4,c,e,a,b,e,c,b,c6,e,c,c6,f#,d,a4,f#,e.,16c,a4,4e,c,a4,e,g4,a4,4a4",
+  "Smurfs:o=5,d=4,b=200,b=200:2c6,f6.,8c6,d6,a#,2g,c6.,8a,f,a,2g,p,16g,16a,16a#,16b,2c6,f6.,8c6,d6,a#,2g,c6.,8a,a#,e,2f,p,16g,16a,16a#,16b,2c6,f6.,8c6,d6,a#,2g,c6.,8a,f,a,2g,p,16g,16a,16a#,16b,2c6,f6.,8c6,d6,a#,2g,c6.,8a,a#,e,2f.,1p",
+  "Barbie Girl:o=5,d=8,b=125,b=125:g#,e,g#,c#6,4a,4p,f#,d#,f#,b,4g#,f#,e,4p,e,c#,4f#,4c#,4p,f#,e,4g#,4f#",
+  "Bolero:o=5,d=16,b=80,b=80:c6,8c6,b,c6,d6,c6,b,a,8c6,c6,a,4c6,8c6,b,c6,a,g,e,f,2g,g,f,e,d,e,f,g,a,4g,4g,g,a,b,a,g,f,e,d,e,d,8c,8c,c,d,8e,8f,4d,2g",
+  "Adams Family:o=5,d=8,b=160,b=160:c,4f,a,4f,c,4b4,2g,f,4e,g,4e,g4,4c,2f,c,4f,a,4f,c,4b4,2g,f,4e,c,4d,e,1f,c,d,e,f,1p,d,e,f#,g,1p,d,e,f#,g,4p,d,e,f#,g,4p,c,d,e,f",
+  "Simpsons:o=5,d=8,b=160,b=160:c6.,4e6,4f#6,a6,4g6.,4e6,4c6,a,f#,f#,f#,2g,p,p,f#,f#,f#,g,4a#.,c6,c6,c6,4c6",
+  "Star Wars:o=6,d=8,b=180,b=180:f5,f5,f5,2a#5.,2f.,d#,d,c,2a#.,4f.,d#,d,c,2a#.,4f.,d#,d,d#,2c,4p,f5,f5,f5,2a#5.,2f.,d#,d,c,2a#.,4f.,d#,d,c,2a#.,4f.,d#,d,d#,2c",
+  "Super Man:o=6,d=8,b=180,b=180:g5,g5,g5,4c,c,2g,p,g,a.,16g,f,1g,p,g5,g5,g5,4c,c,2g,p,g,a.,16g,f,a,2g.,4p,c,c,c,2b.,4g.,c,c,c,2b.,4g.,c,c,c,b,a,b,2c7,c,c,c,c,c,2c.",
+  "Halloween:o=5,d=8,b=180,b=180:d6,g,g,d6,g,g,d6,g,d#6,g,d6,g,g,d6,g,g,d6,g,d#6,g,c#6,f#,f#,c#6,f#,f#,c#6,f#,d6,f#,c#6,f#,f#,c#6,f#,f#,c#6,f#,d6,f#",
+  "Final Countdown:o=5,d=16,b=125,b=125:b,a,4b,4e,4p,8p,c6,b,8c6,8b,4a,4p,8p,c6,b,4c6,4e,4p,8p,a,g,8a,8g,8f#,8a,4g.,f#,g,4a.,g,a,8b,8a,8g,8f#,4e,4c6,2b.,b,c6,b,a,1b",
+  "Back to the Future:o=5,d=16,b=200,b=200:4g.,p,4c.,p,2f#.,p,g.,p,a.,p,8g,p,8e,p,8c,p,4f#,p,g.,p,a.,p,8g.,p,8d.,p,8g.,p,8d6.,p,4d6.,p,4c#6,p,b.,p,c#6.,p,2d6."
 };
 
 // Frecuencias base octava 4: C C# D D# E F F# G G# A A# B
@@ -108,6 +120,9 @@ void TiraHero::begin() {
   nextNote    = 0;
   songStartMs = millis();
   lastUpdate  = millis();
+  inGap       = false;
+  gapUntil    = 0;
+  buzzerOffAt    = 0;
   melodyEndMs    = 0;
   lastMelodyFreq = 0;
   lastBeatNum    = -1;
@@ -171,6 +186,7 @@ static void killPlayerSparks(TH_Spark* sparks, int p) {
 void TiraHero::addPenalty(int p) {
   if (playerOut[p]) return;
   penaltyCount[p]++;
+  sendJoystickSoundToPlayer(p + 1, SND_ERROR);
   if (penaltyCount[p] >= 3) {
     playerOut[p] = true;
     killPlayerSparks(sparks, p);
@@ -183,6 +199,12 @@ void TiraHero::addPenalty(int p) {
 
 // ── Update ────────────────────────────────────────────────────────────
 void TiraHero::update() {
+  // Corta el tono actual manualmente en vez de usar tone(pin,freq,dur), y con
+  // rtttl::noTone (no el global) para no pelearse con el canal LEDC que ya
+  // reclamó la librería RTTTL — ver NonBlockingRtttl.h.
+  unsigned long buzzerNow = millis();
+  if (buzzerOffAt && buzzerNow >= buzzerOffAt) { rtttl::noTone(BUZZER_PIN); buzzerOffAt = 0; }
+
   if (gameOver) {
     if (millis() >= endMs) begin();
     else renderFrame();
@@ -217,7 +239,8 @@ void TiraHero::update() {
         b.fired = true;
         // La nota siempre suena al llegar: el jugador tiene hasta offset LEDs para presionar
         if (b.freq > 0) {
-          tone(BUZZER_PIN, b.freq, b.durMs);
+          rtttl::tone(BUZZER_PIN, b.freq);
+          buzzerOffAt    = now + b.durMs;
           melodyEndMs    = now + b.durMs;
           lastMelodyFreq = b.freq;
         }
@@ -248,11 +271,16 @@ void TiraHero::update() {
   }
 
   // Percusión: golpe grave en cada negra desde el inicio de la canción
-  int beatNum = (int)((float)(now - songStartMs) / quarterMs);
-  if (beatNum > lastBeatNum) {
-    lastBeatNum = beatNum;
-    if (now >= melodyEndMs)
-      tone(BUZZER_PIN, 65, 70);
+  // (silenciada durante el gap entre canciones)
+  if (!inGap) {
+    int beatNum = (int)((float)(now - songStartMs) / quarterMs);
+    if (beatNum > lastBeatNum) {
+      lastBeatNum = beatNum;
+      if (now >= melodyEndMs) {
+        rtttl::tone(BUZZER_PIN, 65);
+        buzzerOffAt = now + 70;
+      }
+    }
   }
 
   // Expirar goodHold cuando el bloque termina o el trailing edge pasó 8 LEDs la base
@@ -283,18 +311,34 @@ void TiraHero::update() {
     }
   }
 
-  // Reiniciar cuando se acabó la melodía y no hay bloques activos
-  if (nextNote >= noteCount) {
+  // Fin de canción: cura vidas una vez y arranca 2s de silencio antes de la siguiente.
+  if (!inGap && nextNote >= noteCount) {
     bool any = false;
     for (int i = 0; i < TH_MAX_BLOCKS; i++)
       if (blocks[i].active) { any = true; break; }
     if (!any) {
-      songIdx = (songIdx + 1) % SONG_COUNT;
-      parseRTTTL(SONGS[songIdx]);
-      nextNote    = 0;
-      songStartMs = millis();
-      lastBeatNum = -1;
+      // Curar una vida a quien perdió alguna; revivir al eliminado con 1 vida (2 LEDs rojos)
+      for (int p = 0; p < 2; p++) {
+        if (playerOut[p]) {
+          playerOut[p]    = false;
+          penaltyCount[p] = 2;
+        } else if (penaltyCount[p] > 0) {
+          penaltyCount[p]--;
+        }
+      }
+      inGap    = true;
+      gapUntil = now + TH_SONG_GAP_MS;
     }
+  }
+
+  // Terminado el silencio: levanta el siguiente nivel de la lista de canciones.
+  if (inGap && now >= gapUntil) {
+    inGap       = false;
+    songIdx     = (songIdx + 1) % SONG_COUNT;
+    parseRTTTL(SONGS[songIdx]);
+    nextNote    = 0;
+    songStartMs = millis();
+    lastBeatNum = -1;
   }
 
   // Chispas: spawn en la base mientras haya nota en la ventana

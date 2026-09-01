@@ -14,10 +14,13 @@
 #define SHIFT_STEPS      10   // LEDs desplazados hacia el oponente en un match
 #define SHIFT_STEP_MS    20   // ms por paso del desplazamiento (10 pasos = 200ms)
 
+// Gesto de disparo: sacudida brusca de muñeca en tiltY
+#define TC_FIRE_THRESHOLD   6500  // delta raw tiltY entre frames para reconocer gesto de disparo (en cualquier dirección)
+#define TC_FIRE_COOLDOWN_MS  400  // ms mínimo entre disparos consecutivos
+
 // Sonidos del juego (formato RTTTL) — se reproducen en master Y se envían a los joysticks
 #define SND_SHOOT     "Shoot:d=16,o=5,b=200:b6,g4,c3"
 #define SND_COLOR     "Color:d=32,o=4,b=240:g3"
-#define SND_MISS      "Miss:d=16,o=4,b=120:e4,b3"
 #define SND_EXPLOSION "Expl:d=16,o=3,b=100:c4,a3,g3,f3"
 
 // Explosión de partículas en match
@@ -43,17 +46,20 @@ struct Shot {
   int  colorIdx;
 };
 
-class TiraMatch : public GameBase {
+class TiraColors : public GameBase {
 public:
-  TiraMatch(CRGB* leds, int numLeds, U8G2* display);
-  ~TiraMatch();
+  TiraColors(CRGB* leds, int numLeds, U8G2* display);
+  ~TiraColors();
 
   void begin()   override;
   void update()  override;
   void onInput(int player, int button) override;
-  void onAnalog(int player, int16_t tiltX, int16_t tiltY) override;
+  void onAnalog(int player, int16_t tiltX, int16_t tiltY, int16_t tiltZ) override;
 
-protected:
+private:
+  unsigned long buzzerOffAt;   // millis() en que hay que cortar el tono actual (0 = ninguno pendiente);
+                               // evita tone(pin,freq,dur) para no agotar el timer interno del core de ESP32
+
   bool          introActive;
   unsigned long introStart;
   unsigned long lastIntroSound;
@@ -68,10 +74,6 @@ protected:
   int           activeColors;
   unsigned long lastColorAdd;
 
-  void fire(int player);
-  void colorChange(int player, int delta); // +1=next, -1=prev
-
-private:
   Shot          shots[MAX_SHOTS];
   unsigned long lastMove;
 
@@ -103,6 +105,13 @@ private:
   unsigned long goTimer;
   int           goSweepStep;
 
+  // Disparo por gesto (sacudida de muñeca)
+  int16_t       prevTilt[2];
+  bool          firstAnalog[2];
+  unsigned long lastFire[2];
+
+  void fire(int player);
+  void colorChange(int player, int delta); // +1=next, -1=prev
   void moveShots();
   void checkCollisions();
   void explodeAndDestroy(int hitIdx, int minBound, int maxBound, int explosionDir);

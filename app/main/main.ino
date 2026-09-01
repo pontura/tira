@@ -6,11 +6,13 @@
 #include <esp_wifi.h>
 #include "SoundManager.h"
 #include "MainMenu.h"
-#include "TiraMatch.h"
 #include "TiraTenis.h"
 #include "TiraZombies.h"
-#include "TiraGestures.h"
+#include "TiraColors.h"
 #include "TiraHero.h"
+#include "TiraPaint.h"
+#include "Left2Dead.h"
+#include "Metegol.h"
 
 #define LED_PIN     25
 #define NUM_LEDS    144
@@ -18,8 +20,9 @@
 #define LED_TYPE    WS2812B
 #define COLOR_ORDER GRB
 
-#define GAME_COUNT  10
+#define GAME_COUNT  7
 #define MENU_RETURN_MS 2000   // mantener SW 2s en-juego para volver al menú
+#define JOYSTICK_TIMEOUT_MS 2000  // sin paquetes en este lapso = joystick apagado/desconectado
 
 // Dirección de broadcast para sonidos a todos los joysticks
 uint8_t broadcastMAC[] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
@@ -29,6 +32,14 @@ uint8_t joystickMAC[2][6]    = {{0},{0}};
 bool    joystickKnown[2]      = {false, false};
 bool    pendingRegister[2]    = {false, false};
 uint8_t pendingMAC[2][6]      = {{0},{0}};
+volatile unsigned long joystickLastSeen[2] = {0, 0};  // millis() del último paquete recibido de cada joystick
+
+// true si el joystick de ese player mandó algo en los últimos JOYSTICK_TIMEOUT_MS
+bool isPlayerConnected(int player) {
+  int idx = player - 1;
+  if (idx < 0 || idx > 1) return false;
+  return joystickKnown[idx] && (millis() - joystickLastSeen[idx] < JOYSTICK_TIMEOUT_MS);
+}
 
 struct JoyInputPacket {
   uint8_t playerId;
@@ -40,6 +51,7 @@ struct JoyAnalogPacket {
   uint8_t playerId;
   int16_t tiltX;
   int16_t tiltY;
+  int16_t tiltZ;
 };
 
 struct MasterSoundPacket {
@@ -51,12 +63,11 @@ U8G2_SH1106_128X64_NONAME_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE);
 bool displayOK = false;
 
 const char* gameNames[GAME_COUNT] = {
-  "TiraMatch", "TiraTenis", "TiraZombies",
-  "TiraGestures", "TiraHero", "TiraSnake",
-  "TiraBlocks", "TiraBreak", "TiraBattle",
-  "TiraArcade"
+  "Left2Dead", "TiraTenis", "TiraZombies",
+  "TiraColors", "TiraHero", "TiraPaint",
+  "Metegol"
 };
-MainMenu    mainMenu(&display, gameNames, GAME_COUNT);
+MainMenu    mainMenu(&display, gameNames, GAME_COUNT, leds, NUM_LEDS);
 GameBase*   currentGame = nullptr;
 int         currentGameIdx = -1;
 
@@ -65,8 +76,7 @@ bool          swHeld    = false;
 unsigned long swHeldMs  = 0;
 
 void returnToMenu() {
-  SoundManager::stop();
-  noTone(BUZZER_PIN);
+  SoundManager::stop();  // ya corta el tono (rtttl::noTone internamente)
   delete currentGame;
   currentGame    = nullptr;
   currentGameIdx = -1;
@@ -75,38 +85,30 @@ void returnToMenu() {
 }
 
 void switchGame(int idx) {
-  SoundManager::stop();
-  noTone(BUZZER_PIN);
+  SoundManager::stop();  // ya corta el tono (rtttl::noTone internamente)
   delete currentGame;
   currentGame    = nullptr;
   currentGameIdx = idx;
 
-  // Juegos demo (sin implementación): mostrar "Coming soon" y volver al menú
-  if (idx > 4) {
-    if (displayOK) {
-      display.clearBuffer();
-      display.setFont(u8g2_font_7x14B_tr);
-      display.drawStr(4, 28, gameNames[idx]);
-      display.setFont(u8g2_font_5x7_tr);
-      display.drawStr(4, 46, "Coming soon...");
-      display.sendBuffer();
-      delay(1200);
-    }
-    returnToMenu();
-    return;
-  }
-
   switch (idx) {
-    case 0: currentGame = new TiraMatch(leds, NUM_LEDS, &display);    break;
-    case 1: currentGame = new TiraTenis(leds, NUM_LEDS, &display);    break;
-    case 2: currentGame = new TiraZombies(leds, NUM_LEDS, &display);  break;
-    case 3: currentGame = new TiraGestures(leds, NUM_LEDS, &display); break;
+    case 0: currentGame = new Left2Dead(leds, NUM_LEDS, &display);   break;
+    case 1: currentGame = new TiraTenis(leds, NUM_LEDS, &display);   break;
+    case 2: currentGame = new TiraZombies(leds, NUM_LEDS, &display); break;
+    case 3: currentGame = new TiraColors(leds, NUM_LEDS, &display);  break;
     case 4: currentGame = new TiraHero(leds, NUM_LEDS, &display);    break;
+    case 5: currentGame = new TiraPaint(leds, NUM_LEDS, &display);   break;
+    case 6: currentGame = new Metegol(leds, NUM_LEDS, &display);     break;
   }
   if (displayOK) {
+    char title[24];
+    sprintf(title, "< %s", gameNames[idx]);
     display.clearBuffer();
     display.setFont(u8g2_font_7x14B_tr);
-    display.drawStr(4, 36, gameNames[idx]);
+    display.setDrawColor(1);
+    display.drawBox(0, 0, 128, 16);
+    display.setDrawColor(0);
+    display.drawStr(4, 13, title);
+    display.setDrawColor(1);
     display.sendBuffer();
     delay(800);
   }
@@ -157,11 +159,13 @@ volatile bool    analogPending = false;
 volatile uint8_t analogPlayer  = 0;
 volatile int16_t analogTiltX   = 0;
 volatile int16_t analogTiltY   = 0;
+volatile int16_t analogTiltZ   = 0;
 
 void onJoystickData(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
   if (len == sizeof(JoyAnalogPacket)) {
     const JoyAnalogPacket* pkt = (const JoyAnalogPacket*)data;
     int idx = pkt->playerId - 1;
+    if (idx >= 0 && idx < 2) joystickLastSeen[idx] = millis();
     if (idx >= 0 && idx < 2 && !joystickKnown[idx] && !pendingRegister[idx]) {
       Serial.printf("[ESP-NOW] Joystick %d conectado\n", pkt->playerId);
       memcpy(pendingMAC[idx], info->src_addr, 6);
@@ -170,6 +174,7 @@ void onJoystickData(const esp_now_recv_info_t* info, const uint8_t* data, int le
     analogPlayer  = pkt->playerId;
     analogTiltX   = pkt->tiltX;
     analogTiltY   = pkt->tiltY;
+    analogTiltZ   = pkt->tiltZ;
     analogPending = true;
     return;
   }
@@ -181,6 +186,7 @@ void onJoystickData(const esp_now_recv_info_t* info, const uint8_t* data, int le
   const JoyInputPacket* pkt = (const JoyInputPacket*)data;
 
   int idx = pkt->playerId - 1;
+  if (idx >= 0 && idx < 2) joystickLastSeen[idx] = millis();
   if (idx >= 0 && idx < 2 && !joystickKnown[idx] && !pendingRegister[idx]) {
     memcpy(pendingMAC[idx], info->src_addr, 6);
     pendingRegister[idx] = true;
@@ -264,7 +270,7 @@ void loop() {
 
     if (analogPending) {
       analogPending = false;
-      currentGame->onAnalog(analogPlayer, analogTiltX, analogTiltY);
+      currentGame->onAnalog(analogPlayer, analogTiltX, analogTiltY, analogTiltZ);
     }
     if (joyPending) {
       joyPending = false;

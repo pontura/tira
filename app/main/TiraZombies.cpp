@@ -13,7 +13,7 @@ void TiraZombies::begin() {
   renderFrame();
 }
 
-void TiraZombies::onAnalog(int player, int16_t /*tiltX*/, int16_t tiltY) {
+void TiraZombies::onAnalog(int player, int16_t /*tiltX*/, int16_t tiltY, int16_t /*tiltZ*/) {
   if (player < 1 || player > 2) return;
   int p = player - 1;
   if (abs(tiltY) < TZ_TILT_DEAD) {
@@ -39,7 +39,9 @@ void TiraZombies::update() {
       vel[p]  = constrain(vel[p], -TZ_MAX_SPEED, TZ_MAX_SPEED);
     }
     pos[p] += vel[p] * dt;
-    pos[p]  = constrain(pos[p], 1.0f, (float)(numLeds - 2));
+    float lo = 1.0f, hi = (float)(numLeds - 2);
+    if (pos[p] < lo)      pos[p] = hi;
+    else if (pos[p] > hi) pos[p] = lo;
   }
 
   renderFrame();

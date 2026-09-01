@@ -9,6 +9,7 @@
 #define TH_BASE_OFFSET     15     // LEDs desde el centro hasta la base de cada player
 #define TH_HIT_OFFSET       3     // tolerancia en LEDs para hit/release
 #define TH_MAX_SPARKS      48     // chispas simultáneas máximas
+#define TH_SONG_GAP_MS   2000     // silencio entre el fin de una canción y el inicio de la siguiente
 
 struct TH_Note {
   uint16_t freq;       // Hz (0 = silencio)
@@ -47,7 +48,7 @@ public:
   void update()  override;
   void onInput(int player, int button) override;
   void onButtonUp(int player, int button) override;
-  void onAnalog(int player, int16_t tiltX, int16_t tiltY) override {}
+  void onAnalog(int player, int16_t tiltX, int16_t tiltY, int16_t tiltZ) override {}
 
 private:
   TH_Note       notes[TH_MAX_NOTES];
@@ -61,7 +62,11 @@ private:
   unsigned long songStartMs;
   int           songIdx;
   int           nextNote;
+  bool          inGap;      // true durante el silencio entre canciones
+  unsigned long gapUntil;   // millis() en que termina el silencio
   unsigned long lastUpdate;
+  unsigned long buzzerOffAt;   // millis() en que hay que cortar el tono actual (0 = ninguno pendiente);
+                               // evita tone(pin,freq,dur) para no agotar el timer interno del core de ESP32
   unsigned long melodyEndMs;   // hasta cuándo está sonando una nota de melodía
   uint16_t      lastMelodyFreq; // frecuencia de la última nota de melodía
   int           lastBeatNum;  // último beat de negra procesado
